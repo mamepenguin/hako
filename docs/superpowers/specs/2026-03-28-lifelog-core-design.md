@@ -50,11 +50,23 @@ CREATE TABLE entries (
 - **accessed_at / access_count**: LRU管理用。将来の容量管理に備える。
 - **tags**: カンマ区切りの自由テキスト。入力プラグインが設定する追加メタデータ。
 
+### 重複排除
+
+- **URL重複**: `url`が非NULLの場合、同一URLのエントリが既存なら上書き更新（title, content, tags, happened_atを更新）
+- **コンテンツ重複**: `url`がNULLの場合、`title + content`の完全一致で重複判定。一致すればスキップ
+- engramのsemantic重複検出（cosine ≥ 0.90）は採用しない。Lifelogは似た話題の別エントリ（同じ雑貨屋の別メール等）を区別して保持すべきため
+
+### 容量管理
+
+- **上限**: 設定なし（個人のLifelogは蓄積が価値。engramの10,000件制限とは異なる設計判断）
+- **手動削除**: `lifelog delete ID` コマンドで個別削除
+- **accessed_at / access_count**: 将来、自動アーカイブや統計に使う可能性のために記録。現時点では自動pruningは実装しない
+
 ### FTS5 (キーワード検索)
 
 ```sql
 CREATE VIRTUAL TABLE entries_fts USING fts5(
-    title, content,
+    title, content, tags,
     content='entries',
     content_rowid='id',
     tokenize='trigram'
@@ -66,21 +78,21 @@ CREATE VIRTUAL TABLE entries_fts USING fts5(
 - トリガーで自動同期:
 
 ```sql
-CREATE TRIGGER entries_ai AFTER INSERT ON entries BEGIN
-    INSERT INTO entries_fts(rowid, title, content)
-    VALUES (new.id, new.title, new.content);
+CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
+    INSERT INTO entries_fts(rowid, title, content, tags)
+    VALUES (new.id, new.title, new.content, new.tags);
 END;
 
-CREATE TRIGGER entries_ad AFTER DELETE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, title, content)
-    VALUES ('delete', old.id, old.title, old.content);
+CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
+    INSERT INTO entries_fts(entries_fts, rowid, title, content, tags)
+    VALUES ('delete', old.id, old.title, old.content, old.tags);
 END;
 
-CREATE TRIGGER entries_au AFTER UPDATE ON entries BEGIN
-    INSERT INTO entries_fts(entries_fts, rowid, title, content)
-    VALUES ('delete', old.id, old.title, old.content);
-    INSERT INTO entries_fts(rowid, title, content)
-    VALUES (new.id, new.title, new.content);
+CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
+    INSERT INTO entries_fts(entries_fts, rowid, title, content, tags)
+    VALUES ('delete', old.id, old.title, old.content, old.tags);
+    INSERT INTO entries_fts(rowid, title, content, tags)
+    VALUES (new.id, new.title, new.content, new.tags);
 END;
 ```
 
@@ -95,6 +107,19 @@ CREATE VIRTUAL TABLE entries_vec USING vec0(
 
 - ruri-v3-310mの出力次元 = 768
 - ingest時にembeddingを計算して挿入
+
+### インデックス
+
+```sql
+-- URL重複排除をDB層で強制
+CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_url ON entries(url) WHERE url IS NOT NULL;
+
+-- happened_at での時系列クエリ用
+CREATE INDEX IF NOT EXISTS idx_entries_happened_at ON entries(happened_at);
+
+-- source での絞り込み用
+CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source);
+```
 
 ---
 
@@ -134,12 +159,34 @@ def embed(text: str) -> list[float]:
 
 - `list`や`show`ではモデル不要。search/ingest初回呼び出し時のみロード
 
+### バッチ推論
+
+```python
+def embed_batch(texts: list[str]) -> list[list[float]]:
+    model = _get_model()
+    vecs = model.encode(texts, normalize_embeddings=True, batch_size=32)
+    return vecs.tolist()
+```
+
+- 複数エントリの一括ingestやDB再構築時に使用
+
+### ベクトルのシリアライズ
+
+```python
+import struct
+
+def serialize_vec(vec: list[float]) -> bytes:
+    return struct.pack(f"{len(vec)}f", *vec)
+```
+
+- sqlite-vecへのINSERT時にfloat配列をバイナリに変換（engram同様）
+
 ### Embeddingキャッシュ
 
 ```
 ~/.lifelog/embedding_cache.db
 
-CREATE TABLE cache (
+CREATE TABLE embedding_cache (
     content_hash  TEXT PRIMARY KEY,  -- SHA256(embedding入力テキスト)
     embedding     BLOB               -- float[768]をpackしたバイナリ
 );
@@ -156,13 +203,33 @@ CREATE TABLE cache (
 
 ```
 search(query, source?, limit) →
-  1. sourceが指定されていれば WHERE source = ? で候補を限定
-  2. FTS5で上位50件取得
-  3. sqlite-vecで上位50件取得（embedding(query)とのコサイン類似度）
-  4. RRF融合（K=60）
-  5. 時間減衰を乗算（happened_atベース）
-  6. accessed_at / access_count を更新
-  7. 上位limit件を返却
+  1. FTS5で上位50件取得（sourceがあればJOIN先でWHERE source = ?）
+  2. sqlite-vecで上位50件取得（MATCH + k=50）、sourceがあれば結果を後フィルタ
+  3. RRF融合（K=60）
+  4. 時間減衰を乗算（happened_atベース）
+  5. accessed_at / access_count を更新
+  6. 上位limit件を返却
+```
+
+**sourceフィルタの適用タイミング:**
+- FTS: `entries_fts JOIN entries ON ... WHERE entries.source = ?` で事前フィルタ可能
+- sqlite-vec: vec0はWHERE句での外部カラムフィルタ不可。`k=50`で取得後、entriesとJOINしてsourceで後フィルタ。後フィルタにより50件未満になる可能性があるが、許容する
+
+**FTSクエリの構築:**
+```python
+def _build_fts_query(query: str) -> str:
+    escaped = query.replace('"', '""')
+    return f'"{escaped}"'
+```
+- ユーザー入力をダブルクォートで囲み、trigram tokenizerの部分文字列マッチとして実行（engram同様）
+
+**ベクトル検索のSQL:**
+```sql
+SELECT v.entry_id, v.distance
+FROM entries_vec v
+WHERE v.embedding MATCH ?
+  AND k = 50
+ORDER BY v.distance
 ```
 
 ### RRF融合
@@ -183,8 +250,11 @@ def rrf_score(rank: int) -> float:
 TIME_DECAY_HALF_LIFE_DAYS = 180.0
 TIME_DECAY_FLOOR = 0.1
 
-def time_decay(happened_at: str) -> float:
-    days_old = (now - parse(happened_at)).days
+def time_decay(happened_at: str, created_at: str) -> float:
+    # 減衰の基準はhappened_atとcreated_atの新しい方
+    # 理由: 2年前の記事を今日ingestした場合、happened_atだと即座にfloorになる
+    reference = max(parse(happened_at), parse(created_at))
+    days_old = (now - reference).days
     decay = 0.5 ** (days_old / TIME_DECAY_HALF_LIFE_DAYS)
     return max(decay, TIME_DECAY_FLOOR)
 ```
@@ -236,6 +306,8 @@ lifelog ingest email  --title TITLE --content TEXT [--tags TAGS] [--happened-at 
 lifelog search        QUERY [--source SOURCE] [--limit N]
 lifelog list          [--source SOURCE] [--since DATE] [--until DATE] [--limit N]
 lifelog show          ID
+lifelog delete        ID
+lifelog stats
 ```
 
 - `ingest`のサブコマンドごとに必須引数が違う（webならURL必須）
@@ -244,6 +316,8 @@ lifelog show          ID
 - `search`は位置引数でクエリ（最頻出コマンドなので簡潔に）
 - `list`は時系列一覧（検索品質の検証用）
 - `show`はIDで1件の詳細表示
+- `delete`はIDで1件削除（entries + entries_fts + entries_vec）
+- `stats`はエントリ数、source別件数、DB容量等を表示
 
 ---
 
@@ -276,6 +350,8 @@ max_content_chars = 500
 ```python
 def init_db(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
@@ -284,7 +360,7 @@ def init_db(db_path: Path) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS entries (...);
         CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts ...;
         CREATE VIRTUAL TABLE IF NOT EXISTS entries_vec ...;
-        -- トリガー3つ
+        -- トリガー3つ（IF NOT EXISTS付き）
     """)
     return conn
 ```
@@ -313,5 +389,5 @@ def init_db(db_path: Path) -> sqlite3.Connection:
 | memory_type | background / highlight | なし（区別不要） |
 | scope | project / global | なし（単一用途） |
 | 時間減衰 | 半減期30日 | 半減期180日 + floor 0.1 |
-| FTS対象 | content, tags | title, content |
+| FTS対象 | content, tags | title, content, tags |
 | 共通 | SQLite + FTS5(trigram) + sqlite-vec + RRF(K=60) + embedding cache + lazy model load |
