@@ -47,6 +47,9 @@ const DEFAULT_CONFIG: HakoConfig = {
     rrf_k: 60,
     time_decay_half_life_days: 180.0,
     time_decay_floor: 0.1,
+    priority_boost: 1.5,
+    namespace_boost: 1.3,
+    max_entries: 0,
   },
   embedding: {
     model: "sirasagi62/ruri-v3-30m-ONNX",

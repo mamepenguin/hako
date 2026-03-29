@@ -2,19 +2,31 @@ import type Database from "better-sqlite3";
 import { getSearchConfig } from "./config.js";
 import { touchAccessed } from "./db.js";
 import { embed, serializeVec } from "./embeddings.js";
-import type { Entry, SearchResult } from "./types.js";
+import type { Entry, ScopeMode, SearchResult } from "./types.js";
+
+export interface HybridSearchOptions {
+  readonly source?: string;
+  readonly namespace?: string;
+  readonly scope_mode?: ScopeMode;
+  readonly limit?: number;
+  readonly dbPath?: string;
+}
 
 export async function hybridSearch(
   db: Database.Database,
   query: string,
-  opts?: { source?: string; limit?: number; dbPath?: string },
+  opts?: HybridSearchOptions,
 ): Promise<SearchResult[]> {
   const cfg = getSearchConfig(opts?.dbPath);
   const source = opts?.source ?? "";
+  const namespace = opts?.namespace ?? "";
+  const scopeMode = opts?.scope_mode ?? "all";
   const limit = opts?.limit ?? 10;
 
-  const ftsResults = ftsSearch(db, query, source, 50);
-  const vecResults = await vecSearch(db, query, source, 50);
+  const scopeFilter = buildScopeFilter(namespace, scopeMode);
+
+  const ftsResults = ftsSearch(db, query, source, scopeFilter, 50);
+  const vecResults = await vecSearch(db, query, source, scopeFilter, 50);
 
   const rrfScores = rrfFusion(ftsResults, vecResults, cfg.rrf_k);
 
@@ -36,7 +48,14 @@ export async function hybridSearch(
       now,
     );
 
-    const finalScore = Math.round(rrfScore * decay * 1e6) / 1e6;
+    const priorityBoost = row.priority === "high" ? cfg.priority_boost : 1.0;
+    const namespaceBoost =
+      scopeMode === "scoped_then_global" && namespace && row.namespace === namespace
+        ? cfg.namespace_boost
+        : 1.0;
+
+    const finalScore =
+      Math.round(rrfScore * decay * priorityBoost * namespaceBoost * 1e6) / 1e6;
 
     scored.push({ ...row, score: finalScore });
   }
@@ -52,33 +71,58 @@ export async function hybridSearch(
   return results;
 }
 
+interface ScopeFilter {
+  readonly kind: ScopeMode;
+  readonly where: string;
+  readonly params: unknown[];
+}
+
+function buildScopeFilter(namespace: string, scopeMode: ScopeMode): ScopeFilter {
+  switch (scopeMode) {
+    case "scoped":
+      return { kind: "scoped", where: "e.namespace = ?", params: [namespace] };
+    case "global_only":
+      return { kind: "global_only", where: "e.scope = 'global'", params: [] };
+    case "scoped_then_global":
+      return {
+        kind: "scoped_then_global",
+        where: "(e.namespace = ? OR e.scope = 'global')",
+        params: [namespace],
+      };
+    case "all":
+      return { kind: "all", where: "", params: [] };
+  }
+}
+
 function ftsSearch(
   db: Database.Database,
   query: string,
   source: string,
+  scopeFilter: ScopeFilter,
   limit: number,
 ): number[] {
   const ftsQuery = buildFtsQuery(query);
 
-  const rows = source
-    ? (db
-        .prepare(
-          `SELECT e.id FROM entries e
-           JOIN entries_fts f ON f.rowid = e.id
-           WHERE entries_fts MATCH ?
-             AND e.source = ?
-           LIMIT ?`,
-        )
-        .all(ftsQuery, source, limit) as Array<{ id: number }>)
-    : (db
-        .prepare(
-          `SELECT e.id FROM entries e
-           JOIN entries_fts f ON f.rowid = e.id
-           WHERE entries_fts MATCH ?
-           LIMIT ?`,
-        )
-        .all(ftsQuery, limit) as Array<{ id: number }>);
+  const conditions = ["entries_fts MATCH ?"];
+  const params: unknown[] = [ftsQuery];
 
+  if (source) {
+    conditions.push("e.source = ?");
+    params.push(source);
+  }
+  if (scopeFilter.where) {
+    conditions.push(scopeFilter.where);
+    params.push(...scopeFilter.params);
+  }
+
+  params.push(limit);
+
+  const sql = `SELECT e.id FROM entries e
+     JOIN entries_fts f ON f.rowid = e.id
+     WHERE ${conditions.join(" AND ")}
+     LIMIT ?`;
+
+  const rows = db.prepare(sql).all(...params) as Array<{ id: number }>;
   return rows.map((r) => r.id);
 }
 
@@ -86,11 +130,13 @@ async function vecSearch(
   db: Database.Database,
   query: string,
   source: string,
+  scopeFilter: ScopeFilter,
   limit: number,
 ): Promise<number[]> {
   const vec = await embed(query);
   const serialized = serializeVec(vec);
 
+  // vec0 doesn't support arbitrary WHERE — fetch more, then filter
   const rows = db
     .prepare(
       `SELECT v.entry_id, v.distance
@@ -99,23 +145,39 @@ async function vecSearch(
          AND k = ?
        ORDER BY v.distance`,
     )
-    .all(serialized, limit) as Array<{ entry_id: number; distance: number }>;
-
-  if (!source) {
-    return rows.map((r) => r.entry_id);
-  }
+    .all(serialized, limit * 2) as Array<{ entry_id: number; distance: number }>;
 
   const filtered: number[] = [];
   for (const r of rows) {
-    const entry = db
-      .prepare("SELECT source FROM entries WHERE id = ?")
-      .get(r.entry_id) as { source: string } | undefined;
+    if (filtered.length >= limit) break;
 
-    if (entry && entry.source === source) {
-      filtered.push(r.entry_id);
-    }
+    const entry = db
+      .prepare("SELECT source, namespace, scope FROM entries WHERE id = ?")
+      .get(r.entry_id) as { source: string; namespace: string; scope: string } | undefined;
+
+    if (!entry) continue;
+    if (source && entry.source !== source) continue;
+    if (scopeFilter.where && !matchesScopeFilter(entry, scopeFilter)) continue;
+
+    filtered.push(r.entry_id);
   }
   return filtered;
+}
+
+function matchesScopeFilter(
+  entry: { namespace: string; scope: string },
+  filter: ScopeFilter,
+): boolean {
+  switch (filter.kind) {
+    case "all":
+      return true;
+    case "scoped":
+      return entry.namespace === filter.params[0];
+    case "global_only":
+      return entry.scope === "global";
+    case "scoped_then_global":
+      return entry.namespace === filter.params[0] || entry.scope === "global";
+  }
 }
 
 function rrfFusion(

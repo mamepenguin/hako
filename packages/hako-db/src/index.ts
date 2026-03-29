@@ -1,11 +1,13 @@
 import type Database from "better-sqlite3";
-import { resolveDbPath, resolveCachePath } from "./config.js";
+import { resolveDbPath, resolveCachePath, getSearchConfig } from "./config.js";
 import {
   getConnection,
   deleteEntry,
   getEntry,
   listEntries,
   listSources,
+  listNamespaces,
+  pruneEntries,
   getStats,
 } from "./db.js";
 import { saveEntry } from "./save.js";
@@ -18,6 +20,7 @@ import type {
   SearchResult,
   ListOptions,
   SourceCount,
+  NamespaceCount,
   Stats,
 } from "./types.js";
 
@@ -37,7 +40,11 @@ export class Hako {
   }
 
   async save(input: SaveInput): Promise<SaveOutput> {
-    return saveEntry(this.db, input, { cachePath: this.cachePath });
+    const cfg = getSearchConfig(this.resolvedDbPath);
+    return saveEntry(this.db, input, {
+      cachePath: this.cachePath,
+      maxEntries: cfg.max_entries,
+    });
   }
 
   async search(
@@ -62,8 +69,16 @@ export class Hako {
     return deleteEntry(this.db, id);
   }
 
+  prune(olderThanDays: number = 90): number {
+    return pruneEntries(this.db, olderThanDays);
+  }
+
   sources(): SourceCount[] {
     return listSources(this.db);
+  }
+
+  namespaces(): NamespaceCount[] {
+    return listNamespaces(this.db);
   }
 
   stats(): Stats {
@@ -84,8 +99,12 @@ export type {
   SearchResult,
   ListOptions,
   SourceCount,
+  NamespaceCount,
   Stats,
   PageInfo,
+  Scope,
+  Priority,
+  ScopeMode,
 } from "./types.js";
 
 // Re-export fetchers
