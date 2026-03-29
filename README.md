@@ -99,12 +99,12 @@ Embedding model: [ruri-v3-30m-ONNX](https://huggingface.co/sirasagi62/ruri-v3-30
 |------|---------|
 | `~/.hako/hako.db` | Main database (default) |
 | `~/.hako/embedding_cache.db` | Embedding cache (follows DB directory) |
-| `~/.hako/config.toml` | User config (optional, always global) |
+| `~/.hako/config.toml` | User config (optional, global fallback) |
 | `~/.cache/huggingface/hub/` | ONNX model cache |
 
 ## Multiple Databases
 
-Use `--db` flag or `HAKO_DB` environment variable to switch databases. The embedding cache is automatically placed alongside the database file.
+Use `--db` flag or `HAKO_DB` environment variable to switch databases. The embedding cache and `config.toml` are automatically resolved relative to the DB directory first, falling back to `~/.hako/`.
 
 Priority: `--db` flag > `HAKO_DB` env > `~/.hako/hako.db`
 
@@ -123,7 +123,7 @@ direnv allow
 
 ## Configuration
 
-Optional `~/.hako/config.toml` (shared across all databases):
+Config is resolved per-DB: `<db-dir>/config.toml` > `~/.hako/config.toml` > built-in defaults:
 
 ```toml
 [search]
