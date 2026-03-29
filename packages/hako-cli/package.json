@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "commander": "^13.0.0",
-    "hako-db": "workspace:*"
+    "hako-db": "workspace:*",
+    "hako-sync": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

@@ -24,6 +24,7 @@
     "@iarna/toml": "^2.2.5",
     "better-sqlite3": "^11.0.0",
     "cheerio": "^1.0.0",
+    "nanoid": "^5.1.7",
     "sqlite-vec": "^0.1.7"
   },
   "devDependencies": {

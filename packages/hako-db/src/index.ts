@@ -9,6 +9,8 @@ import {
   listNamespaces,
   pruneEntries,
   getStats,
+  getAllEntryIds,
+  getEntriesByIds,
 } from "./db.js";
 import { saveEntry } from "./save.js";
 import { hybridSearch } from "./search.js";
@@ -57,7 +59,7 @@ export class Hako {
     });
   }
 
-  get(id: number): Entry | null {
+  get(id: string): Entry | null {
     return getEntry(this.db, id);
   }
 
@@ -65,7 +67,7 @@ export class Hako {
     return listEntries(this.db, options);
   }
 
-  delete(id: number): boolean {
+  delete(id: string): boolean {
     return deleteEntry(this.db, id);
   }
 
@@ -83,6 +85,14 @@ export class Hako {
 
   stats(): Stats {
     return getStats(this.db, this.resolvedDbPath);
+  }
+
+  allIds(): string[] {
+    return getAllEntryIds(this.db);
+  }
+
+  getMany(ids: string[]): Entry[] {
+    return getEntriesByIds(this.db, ids);
   }
 
   close(): void {
@@ -106,6 +116,9 @@ export type {
   Priority,
   ScopeMode,
 } from "./types.js";
+
+// Re-export config utilities
+export { resolveConfigPath, resolveDbPath, resolveCachePath } from "./config.js";
 
 // Re-export fetchers
 export { fetchPage } from "./fetchers/web.js";

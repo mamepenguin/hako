@@ -1,6 +1,7 @@
 import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
+import { nanoid } from "nanoid";
 import * as sqliteVec from "sqlite-vec";
 import {
   EMBEDDING_DIM,
@@ -13,7 +14,7 @@ import type { Entry, NamespaceCount, SourceCount, Stats } from "./types.js";
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS entries (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            TEXT PRIMARY KEY,
     source        TEXT DEFAULT '',
     title         TEXT NOT NULL,
     content       TEXT,
@@ -32,29 +33,29 @@ CREATE TABLE IF NOT EXISTS entries (
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
     title, content, tags,
     content='entries',
-    content_rowid='id',
+    content_rowid='rowid',
     tokenize='trigram'
 );
 
 CREATE TRIGGER IF NOT EXISTS entries_ai AFTER INSERT ON entries BEGIN
     INSERT INTO entries_fts(rowid, title, content, tags)
-    VALUES (new.id, new.title, new.content, new.tags);
+    VALUES (new.rowid, new.title, new.content, new.tags);
 END;
 
 CREATE TRIGGER IF NOT EXISTS entries_ad AFTER DELETE ON entries BEGIN
     INSERT INTO entries_fts(entries_fts, rowid, title, content, tags)
-    VALUES ('delete', old.id, old.title, old.content, old.tags);
+    VALUES ('delete', old.rowid, old.title, old.content, old.tags);
 END;
 
 CREATE TRIGGER IF NOT EXISTS entries_au AFTER UPDATE ON entries BEGIN
     INSERT INTO entries_fts(entries_fts, rowid, title, content, tags)
-    VALUES ('delete', old.id, old.title, old.content, old.tags);
+    VALUES ('delete', old.rowid, old.title, old.content, old.tags);
     INSERT INTO entries_fts(rowid, title, content, tags)
-    VALUES (new.id, new.title, new.content, new.tags);
+    VALUES (new.rowid, new.title, new.content, new.tags);
 END;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS entries_vec USING vec0(
-    entry_id INTEGER PRIMARY KEY,
+    entry_id TEXT PRIMARY KEY,
     embedding FLOAT[${EMBEDDING_DIM}]
 );
 
@@ -63,13 +64,6 @@ CREATE INDEX IF NOT EXISTS idx_entries_happened_at ON entries(happened_at);
 CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source);
 CREATE INDEX IF NOT EXISTS idx_entries_namespace ON entries(namespace);
 CREATE INDEX IF NOT EXISTS idx_entries_scope ON entries(scope);
-`;
-
-const MIGRATION_SQL = `
-ALTER TABLE entries ADD COLUMN namespace TEXT NOT NULL DEFAULT '';
-ALTER TABLE entries ADD COLUMN scope TEXT NOT NULL DEFAULT 'default';
-ALTER TABLE entries ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal';
-ALTER TABLE entries ADD COLUMN updated_at TEXT;
 `;
 
 export function getConnection(dbPath: string): Database.Database {
@@ -82,25 +76,117 @@ export function getConnection(dbPath: string): Database.Database {
 }
 
 function ensureSchema(db: Database.Database): void {
-  db.exec(SCHEMA_SQL);
   migrateIfNeeded(db);
+  db.exec(SCHEMA_SQL);
 }
 
 function migrateIfNeeded(db: Database.Database): void {
-  const columns = db.pragma("table_info(entries)") as Array<{ name: string }>;
-  const colNames = new Set(columns.map((c) => c.name));
+  const tables = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='entries'")
+    .all() as Array<{ name: string }>;
 
-  if (colNames.has("namespace")) return;
+  if (tables.length === 0) return;
 
-  for (const stmt of MIGRATION_SQL.trim().split(";")) {
-    const trimmed = stmt.trim();
-    if (trimmed) db.exec(trimmed);
+  const columns = db.pragma("table_info(entries)") as Array<{
+    name: string;
+    type: string;
+  }>;
+  const colMap = new Map(columns.map((c) => [c.name, c.type]));
+
+  // Add namespace/scope/priority/updated_at if missing (pre-v2 migration)
+  if (!colMap.has("namespace")) {
+    for (const stmt of [
+      "ALTER TABLE entries ADD COLUMN namespace TEXT NOT NULL DEFAULT ''",
+      "ALTER TABLE entries ADD COLUMN scope TEXT NOT NULL DEFAULT 'default'",
+      "ALTER TABLE entries ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'",
+      "ALTER TABLE entries ADD COLUMN updated_at TEXT",
+    ]) {
+      db.exec(stmt);
+    }
   }
+
+  // Migrate INTEGER id to TEXT (Nano ID)
+  const idType = colMap.get("id");
+  if (idType === "INTEGER") {
+    migrateToNanoId(db);
+  }
+}
+
+function migrateToNanoId(db: Database.Database): void {
+  const rows = db.prepare("SELECT * FROM entries").all() as Array<
+    Record<string, unknown>
+  >;
+
+  // Drop virtual tables and triggers
+  db.exec("DROP TABLE IF EXISTS entries_vec");
+  db.exec("DROP TABLE IF EXISTS entries_fts");
+  db.exec("DROP TRIGGER IF EXISTS entries_ai");
+  db.exec("DROP TRIGGER IF EXISTS entries_ad");
+  db.exec("DROP TRIGGER IF EXISTS entries_au");
+
+  // Rename old table and drop indexes
+  db.exec("DROP INDEX IF EXISTS idx_entries_url");
+  db.exec("DROP INDEX IF EXISTS idx_entries_happened_at");
+  db.exec("DROP INDEX IF EXISTS idx_entries_source");
+  db.exec("DROP INDEX IF EXISTS idx_entries_namespace");
+  db.exec("DROP INDEX IF EXISTS idx_entries_scope");
+  db.exec("ALTER TABLE entries RENAME TO entries_old");
+
+  // Create new table with TEXT PK
+  db.exec(`
+    CREATE TABLE entries (
+        id            TEXT PRIMARY KEY,
+        source        TEXT DEFAULT '',
+        title         TEXT NOT NULL,
+        content       TEXT,
+        url           TEXT,
+        namespace     TEXT NOT NULL DEFAULT '',
+        scope         TEXT NOT NULL DEFAULT 'default',
+        priority      TEXT NOT NULL DEFAULT 'normal',
+        happened_at   TEXT NOT NULL,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT,
+        tags          TEXT DEFAULT '',
+        accessed_at   TEXT NOT NULL,
+        access_count  INTEGER DEFAULT 0
+    );
+  `);
+
+  // Insert with new Nano IDs
+  const insert = db.prepare(`
+    INSERT INTO entries (id, source, title, content, url, namespace, scope, priority,
+                         happened_at, created_at, updated_at, tags, accessed_at, access_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  for (const row of rows) {
+    insert.run(
+      nanoid(),
+      row.source ?? "",
+      row.title,
+      row.content ?? null,
+      row.url ?? null,
+      row.namespace ?? "",
+      row.scope ?? "default",
+      row.priority ?? "normal",
+      row.happened_at,
+      row.created_at,
+      row.updated_at ?? null,
+      row.tags ?? "",
+      row.accessed_at ?? row.created_at,
+      row.access_count ?? 0,
+    );
+  }
+
+  db.exec("DROP TABLE entries_old");
+  // Schema (FTS, vec0, indexes, triggers) will be created by ensureSchema
+  // vec0 embeddings are lost — will be recomputed on next save/search
 }
 
 export async function insertEntry(
   db: Database.Database,
   opts: {
+    id?: string;
     source?: string;
     title: string;
     content?: string | null;
@@ -112,7 +198,7 @@ export async function insertEntry(
     priority?: string;
     cachePath: string;
   },
-): Promise<{ id: number; status: "created" | "updated" | "skipped" }> {
+): Promise<{ id: string; status: "created" | "updated" | "skipped" }> {
   const source = opts.source ?? "";
   const content = opts.content ?? null;
   const url = opts.url ?? null;
@@ -120,6 +206,16 @@ export async function insertEntry(
   const namespace = opts.namespace ?? "";
   const scope = opts.scope ?? "default";
   const priority = opts.priority ?? "normal";
+
+  // If a specific ID is provided and already exists, skip
+  if (opts.id) {
+    const existing = db
+      .prepare("SELECT id FROM entries WHERE id = ?")
+      .get(opts.id) as { id: string } | undefined;
+    if (existing) {
+      return { id: opts.id, status: "skipped" };
+    }
+  }
 
   const embeddingInput = makeEmbeddingInput(opts.title, content);
   const vec = await embed(embeddingInput);
@@ -130,7 +226,7 @@ export async function insertEntry(
   if (url !== null) {
     const existing = db
       .prepare("SELECT id FROM entries WHERE url = ?")
-      .get(url) as { id: number } | undefined;
+      .get(url) as { id: string } | undefined;
 
     if (existing) {
       db.prepare(
@@ -143,7 +239,7 @@ export async function insertEntry(
 
       db.prepare(
         "UPDATE entries_vec SET embedding = ? WHERE entry_id = ?",
-      ).run(serialized, BigInt(existing.id));
+      ).run(serialized, existing.id);
 
       return { id: existing.id, status: "updated" };
     }
@@ -166,7 +262,7 @@ export async function insertEntry(
 
         db.prepare(
           "UPDATE entries_vec SET embedding = ? WHERE entry_id = ?",
-        ).run(serialized, BigInt(dupId));
+        ).run(serialized, dupId);
 
         return { id: dupId, status: "updated" };
       }
@@ -176,7 +272,7 @@ export async function insertEntry(
         .prepare(
           "SELECT id FROM entries WHERE namespace = ? AND title = ? AND content IS ? LIMIT 1",
         )
-        .get(namespace, opts.title, content) as { id: number } | undefined;
+        .get(namespace, opts.title, content) as { id: string } | undefined;
 
       if (existing) {
         return { id: existing.id, status: "skipped" };
@@ -185,29 +281,38 @@ export async function insertEntry(
   }
 
   // New entry
-  const result = db
-    .prepare(
-      `INSERT INTO entries (source, title, content, url, namespace, scope, priority, happened_at, tags)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(source, opts.title, content, url, namespace, scope, priority, opts.happened_at, tags);
+  const entryId = opts.id ?? nanoid();
 
-  const entryId = Number(result.lastInsertRowid);
+  db.prepare(
+    `INSERT INTO entries (id, source, title, content, url, namespace, scope, priority, happened_at, tags)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    entryId,
+    source,
+    opts.title,
+    content,
+    url,
+    namespace,
+    scope,
+    priority,
+    opts.happened_at,
+    tags,
+  );
 
   db.prepare(
     "INSERT INTO entries_vec (entry_id, embedding) VALUES (?, ?)",
-  ).run(BigInt(entryId), serialized);
+  ).run(entryId, serialized);
 
   return { id: entryId, status: "created" };
 }
 
-const DEDUP_SIMILARITY_THRESHOLD = 0.90;
+const DEDUP_SIMILARITY_THRESHOLD = 0.9;
 
 function findSemanticDuplicate(
   db: Database.Database,
   serializedVec: Float32Array,
   namespace: string,
-): number | null {
+): string | null {
   const rows = db
     .prepare(
       `SELECT v.entry_id, v.distance
@@ -216,7 +321,7 @@ function findSemanticDuplicate(
          AND k = 5
        ORDER BY v.distance`,
     )
-    .all(serializedVec) as Array<{ entry_id: number; distance: number }>;
+    .all(serializedVec) as Array<{ entry_id: string; distance: number }>;
 
   for (const row of rows) {
     const similarity = 1.0 - row.distance;
@@ -233,20 +338,18 @@ function findSemanticDuplicate(
   return null;
 }
 
-export function deleteEntry(db: Database.Database, entryId: number): boolean {
-  const result = db
-    .prepare("DELETE FROM entries WHERE id = ?")
-    .run(entryId);
+export function deleteEntry(db: Database.Database, entryId: string): boolean {
+  const result = db.prepare("DELETE FROM entries WHERE id = ?").run(entryId);
 
   if (result.changes === 0) return false;
 
-  db.prepare("DELETE FROM entries_vec WHERE entry_id = ?").run(BigInt(entryId));
+  db.prepare("DELETE FROM entries_vec WHERE entry_id = ?").run(entryId);
   return true;
 }
 
 export function getEntry(
   db: Database.Database,
-  entryId: number,
+  entryId: string,
 ): Entry | null {
   const row = db
     .prepare("SELECT * FROM entries WHERE id = ?")
@@ -288,7 +391,8 @@ export function listEntries(
     params.push(opts.until);
   }
 
-  const where = conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+  const where =
+    conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
   const limit = opts?.limit ?? 20;
   params.push(limit);
 
@@ -299,10 +403,7 @@ export function listEntries(
     .all(...params) as Entry[];
 }
 
-export function getStats(
-  db: Database.Database,
-  dbPath: string,
-): Stats {
+export function getStats(db: Database.Database, dbPath: string): Stats {
   const total = (
     db.prepare("SELECT COUNT(*) as c FROM entries").get() as { c: number }
   ).c;
@@ -406,7 +507,11 @@ export function listNamespaces(db: Database.Database): NamespaceCount[] {
        GROUP BY namespace
        ORDER BY count DESC`,
     )
-    .all() as Array<{ namespace: string; count: number; last_updated: string | null }>;
+    .all() as Array<{
+    namespace: string;
+    count: number;
+    last_updated: string | null;
+  }>;
 
   return rows.map((r) => ({
     namespace: r.namespace || "(default)",
@@ -417,7 +522,7 @@ export function listNamespaces(db: Database.Database): NamespaceCount[] {
 
 export function touchAccessed(
   db: Database.Database,
-  entryIds: number[],
+  entryIds: string[],
 ): void {
   if (entryIds.length === 0) return;
 
@@ -428,4 +533,30 @@ export function touchAccessed(
          access_count = access_count + 1
      WHERE id IN (${placeholders})`,
   ).run(...entryIds);
+}
+
+export function getAllEntryIds(db: Database.Database): string[] {
+  const rows = db.prepare("SELECT id FROM entries").all() as Array<{
+    id: string;
+  }>;
+  return rows.map((r) => r.id);
+}
+
+export function getEntriesByIds(
+  db: Database.Database,
+  ids: string[],
+): Entry[] {
+  if (ids.length === 0) return [];
+
+  const CHUNK = 500;
+  const results: Entry[] = [];
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const batch = ids.slice(i, i + CHUNK);
+    const placeholders = batch.map(() => "?").join(",");
+    const rows = db
+      .prepare(`SELECT * FROM entries WHERE id IN (${placeholders})`)
+      .all(...batch) as Entry[];
+    results.push(...rows);
+  }
+  return results;
 }

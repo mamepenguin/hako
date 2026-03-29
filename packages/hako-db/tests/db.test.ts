@@ -82,7 +82,8 @@ describe("db", () => {
       });
 
       expect(result.status).toBe("created");
-      expect(result.id).toBeGreaterThan(0);
+      expect(typeof result.id).toBe("string");
+      expect(result.id.length).toBeGreaterThan(0);
     });
 
     it("updates entry with same URL", async () => {

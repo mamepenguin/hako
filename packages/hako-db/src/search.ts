@@ -50,12 +50,15 @@ export async function hybridSearch(
 
     const priorityBoost = row.priority === "high" ? cfg.priority_boost : 1.0;
     const namespaceBoost =
-      scopeMode === "scoped_then_global" && namespace && row.namespace === namespace
+      scopeMode === "scoped_then_global" &&
+      namespace &&
+      row.namespace === namespace
         ? cfg.namespace_boost
         : 1.0;
 
     const finalScore =
-      Math.round(rrfScore * decay * priorityBoost * namespaceBoost * 1e6) / 1e6;
+      Math.round(rrfScore * decay * priorityBoost * namespaceBoost * 1e6) /
+      1e6;
 
     scored.push({ ...row, score: finalScore });
   }
@@ -77,12 +80,19 @@ interface ScopeFilter {
   readonly params: unknown[];
 }
 
-function buildScopeFilter(namespace: string, scopeMode: ScopeMode): ScopeFilter {
+function buildScopeFilter(
+  namespace: string,
+  scopeMode: ScopeMode,
+): ScopeFilter {
   switch (scopeMode) {
     case "scoped":
       return { kind: "scoped", where: "e.namespace = ?", params: [namespace] };
     case "global_only":
-      return { kind: "global_only", where: "e.scope = 'global'", params: [] };
+      return {
+        kind: "global_only",
+        where: "e.scope = 'global'",
+        params: [],
+      };
     case "scoped_then_global":
       return {
         kind: "scoped_then_global",
@@ -90,6 +100,7 @@ function buildScopeFilter(namespace: string, scopeMode: ScopeMode): ScopeFilter 
         params: [namespace],
       };
     case "all":
+    default:
       return { kind: "all", where: "", params: [] };
   }
 }
@@ -100,7 +111,7 @@ function ftsSearch(
   source: string,
   scopeFilter: ScopeFilter,
   limit: number,
-): number[] {
+): string[] {
   const ftsQuery = buildFtsQuery(query);
 
   const conditions = ["entries_fts MATCH ?"];
@@ -118,11 +129,11 @@ function ftsSearch(
   params.push(limit);
 
   const sql = `SELECT e.id FROM entries e
-     JOIN entries_fts f ON f.rowid = e.id
+     JOIN entries_fts f ON f.rowid = e.rowid
      WHERE ${conditions.join(" AND ")}
      LIMIT ?`;
 
-  const rows = db.prepare(sql).all(...params) as Array<{ id: number }>;
+  const rows = db.prepare(sql).all(...params) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
 
@@ -132,7 +143,7 @@ async function vecSearch(
   source: string,
   scopeFilter: ScopeFilter,
   limit: number,
-): Promise<number[]> {
+): Promise<string[]> {
   const vec = await embed(query);
   const serialized = serializeVec(vec);
 
@@ -145,19 +156,25 @@ async function vecSearch(
          AND k = ?
        ORDER BY v.distance`,
     )
-    .all(serialized, limit * 2) as Array<{ entry_id: number; distance: number }>;
+    .all(serialized, limit * 2) as Array<{
+    entry_id: string;
+    distance: number;
+  }>;
 
-  const filtered: number[] = [];
+  const filtered: string[] = [];
   for (const r of rows) {
     if (filtered.length >= limit) break;
 
     const entry = db
       .prepare("SELECT source, namespace, scope FROM entries WHERE id = ?")
-      .get(r.entry_id) as { source: string; namespace: string; scope: string } | undefined;
+      .get(r.entry_id) as
+      | { source: string; namespace: string; scope: string }
+      | undefined;
 
     if (!entry) continue;
     if (source && entry.source !== source) continue;
-    if (scopeFilter.where && !matchesScopeFilter(entry, scopeFilter)) continue;
+    if (scopeFilter.where && !matchesScopeFilter(entry, scopeFilter))
+      continue;
 
     filtered.push(r.entry_id);
   }
@@ -181,11 +198,11 @@ function matchesScopeFilter(
 }
 
 function rrfFusion(
-  ftsIds: number[],
-  vecIds: number[],
+  ftsIds: string[],
+  vecIds: string[],
   k: number = 60,
-): Map<number, number> {
-  const scores = new Map<number, number>();
+): Map<string, number> {
+  const scores = new Map<string, number>();
 
   for (let rank = 0; rank < ftsIds.length; rank++) {
     const eid = ftsIds[rank];
@@ -209,14 +226,13 @@ function timeDecay(
 ): number {
   const ref = now ?? new Date();
   const reference = new Date(
-    Math.max(
-      new Date(happenedAt).getTime(),
-      new Date(createdAt).getTime(),
-    ),
+    Math.max(new Date(happenedAt).getTime(), new Date(createdAt).getTime()),
   );
 
   const daysOld = Math.max(
-    Math.floor((ref.getTime() - reference.getTime()) / (1000 * 60 * 60 * 24)),
+    Math.floor(
+      (ref.getTime() - reference.getTime()) / (1000 * 60 * 60 * 24),
+    ),
     0,
   );
 

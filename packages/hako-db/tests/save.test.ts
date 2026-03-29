@@ -47,7 +47,8 @@ describe("save", () => {
     }, { cachePath: join(tempDir, "embedding_cache.db") });
 
     expect(result.status).toBe("created");
-    expect(result.id).toBeGreaterThan(0);
+    expect(typeof result.id).toBe("string");
+    expect(result.id.length).toBeGreaterThan(0);
   });
 
   it("throws on empty title", async () => {

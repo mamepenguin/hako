@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { Hako, fetchPage } from "hako-db";
 import type { Entry, SearchResult } from "hako-db";
+import { push, pull, status, init, loadSyncConfig } from "hako-sync";
 
 const program = new Command();
 
@@ -101,7 +102,7 @@ program
   .action((id: string) => {
     const hako = new Hako({ dbPath: getDbPath() });
     try {
-      const entry = hako.get(parseInt(id, 10));
+      const entry = hako.get(id);
       if (!entry) {
         console.log(`Entry ${id} not found.`);
         return;
@@ -117,8 +118,6 @@ program
   .description("Delete an entry")
   .option("-y, --yes", "Skip confirmation")
   .action(async (id: string, opts) => {
-    const entryId = parseInt(id, 10);
-
     if (!opts.yes) {
       const readline = await import("node:readline");
       const rl = readline.createInterface({
@@ -140,7 +139,7 @@ program
 
     const hako = new Hako({ dbPath: getDbPath() });
     try {
-      if (hako.delete(entryId)) {
+      if (hako.delete(id)) {
         console.log(`Deleted entry ${id}.`);
       } else {
         console.log(`Entry ${id} not found.`);
@@ -226,6 +225,109 @@ program
       hako.close();
     }
   });
+
+// --- Sync subcommands ---
+
+const syncCmd = program
+  .command("sync")
+  .description("Sync data between machines");
+
+syncCmd
+  .command("init")
+  .description("Initialize sync repository")
+  .option("--repo <path>", "Path to sync Git repo")
+  .option("--machine-id <id>", "This machine's identifier")
+  .action(async (opts) => {
+    const config = loadSyncConfig(getDbPath());
+    const repo = opts.repo ?? config?.repo;
+    const machineId = opts.machineId ?? config?.machine_id;
+
+    if (!repo || !machineId) {
+      console.error(
+        "Sync not configured. Add [sync] section to config.toml with 'repo' and 'machine_id'.",
+      );
+      process.exit(1);
+    }
+
+    await init(repo, machineId);
+    console.log(`Initialized sync repo at ${repo} for machine '${machineId}'.`);
+  });
+
+syncCmd
+  .command("push")
+  .description("Push local changes to sync repo")
+  .action(async () => {
+    const config = loadSyncConfig(getDbPath());
+    if (!config) {
+      console.error(
+        "Sync not configured. Add [sync] section to config.toml with 'repo' and 'machine_id'.",
+      );
+      process.exit(1);
+    }
+
+    const hako = new Hako({ dbPath: getDbPath() });
+    try {
+      const result = await push(hako, config, getDbPath());
+      if (!result.committed) {
+        console.log("Nothing to push.");
+      } else {
+        console.log(
+          `Pushed: +${result.added} added, -${result.deleted} deleted.`,
+        );
+      }
+    } finally {
+      hako.close();
+    }
+  });
+
+syncCmd
+  .command("pull")
+  .description("Pull and apply remote changes")
+  .action(async () => {
+    const config = loadSyncConfig(getDbPath());
+    if (!config) {
+      console.error(
+        "Sync not configured. Add [sync] section to config.toml with 'repo' and 'machine_id'.",
+      );
+      process.exit(1);
+    }
+
+    const hako = new Hako({ dbPath: getDbPath() });
+    try {
+      const result = await pull(hako, config, getDbPath());
+      console.log(
+        `Pulled: +${result.added} added, -${result.deleted} deleted, ${result.skipped} skipped.`,
+      );
+    } finally {
+      hako.close();
+    }
+  });
+
+syncCmd
+  .command("status")
+  .description("Show sync status")
+  .action(() => {
+    const config = loadSyncConfig(getDbPath());
+    if (!config) {
+      console.error(
+        "Sync not configured. Add [sync] section to config.toml with 'repo' and 'machine_id'.",
+      );
+      process.exit(1);
+    }
+
+    const hako = new Hako({ dbPath: getDbPath() });
+    try {
+      const s = status(hako, config, getDbPath());
+      console.log(`Machine: ${config.machine_id}`);
+      console.log(`Repo: ${config.repo}`);
+      console.log(`Unpushed: +${s.unpushed_adds} adds, -${s.unpushed_deletes} deletes`);
+      console.log(`Unread remote machines: ${s.unread_machines}`);
+    } finally {
+      hako.close();
+    }
+  });
+
+// --- Output helpers ---
 
 function printEntrySummary(entry: Entry | SearchResult): void {
   const score = "score" in entry ? ` [${(entry as SearchResult).score.toFixed(4)}]` : "";

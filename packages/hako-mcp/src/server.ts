@@ -83,7 +83,7 @@ scope_mode controls which entries are searched:
     inputSchema: {
       type: "object" as const,
       properties: {
-        id: { type: "number", description: "The ID of the entry to delete" },
+        id: { type: "string", description: "The ID of the entry to delete" },
       },
       required: ["id"],
     },
@@ -165,8 +165,8 @@ async function handleToolCall(
     }
 
     case "delete": {
-      if (typeof args.id !== "number") throw new Error("id is required");
-      const success = h.delete(args.id);
+      if (typeof args.id !== "string") throw new Error("id is required");
+      const success = h.delete(args.id as string);
       return success
         ? { status: "deleted", id: args.id }
         : { status: "not_found", id: args.id };

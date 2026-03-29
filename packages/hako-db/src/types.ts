@@ -3,7 +3,7 @@ export type Priority = "normal" | "high";
 export type ScopeMode = "scoped" | "global_only" | "scoped_then_global" | "all";
 
 export interface Entry {
-  readonly id: number;
+  readonly id: string;
   readonly source: string;
   readonly title: string;
   readonly content: string | null;
@@ -24,6 +24,7 @@ export interface SearchResult extends Entry {
 }
 
 export interface SaveInput {
+  readonly id?: string;
   readonly title: string;
   readonly content?: string | null;
   readonly source?: string;
@@ -36,7 +37,7 @@ export interface SaveInput {
 }
 
 export interface SaveOutput {
-  readonly id: number;
+  readonly id: string;
   readonly status: "created" | "updated" | "skipped";
 }
 

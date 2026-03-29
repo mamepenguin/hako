@@ -20,6 +20,7 @@ export async function saveEntry(
     input.happened_at ?? new Date().toISOString().slice(0, 19);
 
   const result = await insertEntry(db, {
+    id: input.id,
     source,
     title: input.title,
     content: input.content ?? null,
