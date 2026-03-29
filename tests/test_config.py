@@ -3,7 +3,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-from lifelog.config import load_config, get_search_config, get_embedding_config
+from kura.config import load_config, get_search_config, get_embedding_config
 
 
 def test_defaults_when_no_config(tmp_data_dir):
@@ -11,7 +11,7 @@ def test_defaults_when_no_config(tmp_data_dir):
     assert cfg["search"]["rrf_k"] == 60
     assert cfg["search"]["time_decay_half_life_days"] == 180.0
     assert cfg["search"]["time_decay_floor"] == 0.1
-    assert cfg["embedding"]["model"] == "cl-nagoya/ruri-v3-310m"
+    assert cfg["embedding"]["model"] == "cl-nagoya/ruri-v3-30m"
     assert cfg["embedding"]["max_content_chars"] == 500
 
 
@@ -21,7 +21,7 @@ def test_partial_override(tmp_data_dir):
     cfg = load_config()
     assert cfg["search"]["rrf_k"] == 80
     assert cfg["search"]["time_decay_half_life_days"] == 180.0
-    assert cfg["embedding"]["model"] == "cl-nagoya/ruri-v3-310m"
+    assert cfg["embedding"]["model"] == "cl-nagoya/ruri-v3-30m"
 
 
 def test_get_search_config(tmp_data_dir):

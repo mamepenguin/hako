@@ -1,7 +1,7 @@
 """Local embedding cache to avoid recomputation.
 
 Stores content_hash -> embedding mappings in a lightweight SQLite DB
-at ~/.lifelog/embedding_cache.db.
+at ~/.kura/embedding_cache.db.
 """
 
 from __future__ import annotations
@@ -10,8 +10,8 @@ import hashlib
 import sqlite3
 from pathlib import Path
 
-from lifelog.config import DATA_DIR
-from lifelog.embeddings import EMBEDDING_DIM, serialize_vec, deserialize_vec
+from kura.config import DATA_DIR
+from kura.embeddings import EMBEDDING_DIM, serialize_vec, deserialize_vec
 
 CACHE_PATH = DATA_DIR / "embedding_cache.db"
 

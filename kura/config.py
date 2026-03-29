@@ -3,7 +3,7 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-DATA_DIR = Path.home() / ".lifelog"
+DATA_DIR = Path.home() / ".kura"
 CONFIG_PATH = DATA_DIR / "config.toml"
 
 _DEFAULT_CONFIG = {
@@ -13,7 +13,7 @@ _DEFAULT_CONFIG = {
         "time_decay_floor": 0.1,
     },
     "embedding": {
-        "model": "cl-nagoya/ruri-v3-310m",
+        "model": "cl-nagoya/ruri-v3-30m",
         "max_content_chars": 500,
     },
 }

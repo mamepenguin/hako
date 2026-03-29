@@ -3,16 +3,16 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from lifelog.config import DATA_DIR
-from lifelog.embeddings import (
+from kura.config import DATA_DIR
+from kura.embeddings import (
     EMBEDDING_DIM,
     embed,
     make_embedding_input,
     serialize_vec,
 )
-from lifelog.embedding_cache import store_batch as cache_store_batch
+from kura.embedding_cache import store_batch as cache_store_batch
 
-DB_PATH = DATA_DIR / "lifelog.db"
+DB_PATH = DATA_DIR / "kura.db"
 
 _SCHEMA_SQL = f"""
 CREATE TABLE IF NOT EXISTS entries (
@@ -213,6 +213,14 @@ def get_stats(conn: sqlite3.Connection, db_path: Path | None = None) -> dict:
         "db_size_bytes": db_size,
         "db_size_mb": round(db_size / (1024 * 1024), 2),
     }
+
+
+def list_sources(conn: sqlite3.Connection) -> list[dict]:
+    rows = conn.execute(
+        """SELECT source, COUNT(*) as count FROM entries
+           GROUP BY source ORDER BY count DESC"""
+    ).fetchall()
+    return [{"source": r["source"] or "(empty)", "count": r["count"]} for r in rows]
 
 
 def _touch_accessed(conn: sqlite3.Connection, entry_ids: list[int]) -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lifelog.embedding_cache import lookup_batch, store_batch
+from kura.embedding_cache import lookup_batch, store_batch
 
 
 def test_store_and_lookup(tmp_data_dir):

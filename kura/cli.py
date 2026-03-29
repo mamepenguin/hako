@@ -2,55 +2,37 @@ from __future__ import annotations
 
 import click
 
-from lifelog.db import get_connection, delete_entry, get_entry, list_entries, get_stats
-from lifelog.ingest import ingest_entry
-from lifelog.search import hybrid_search
+from kura.db import (
+    get_connection,
+    delete_entry,
+    get_entry,
+    list_entries,
+    list_sources,
+    get_stats,
+)
+from kura.save import save_entry
+from kura.search import hybrid_search
 
 
 @click.group()
 def main():
-    """Lifelog: personal information store with hybrid search."""
+    """Kura: data store with hybrid search."""
     pass
 
 
-@main.group()
-def ingest():
-    """Ingest entries from various sources."""
-    pass
-
-
-@ingest.command("web")
-@click.option("--url", required=True, help="URL of the web page")
-@click.option("--title", default="", help="Page title (auto-detect later)")
-@click.option("--content", default=None, help="Page content or excerpt")
-@click.option("--tags", default="", help="Comma-separated tags")
-@click.option("--happened-at", default=None, help="When you saw it (ISO 8601)")
-def ingest_web(url, title, content, tags, happened_at):
-    """Ingest a web page."""
-    if not title:
-        title = url
-    conn = get_connection()
-    try:
-        entry_id, status = ingest_entry(
-            conn, source="web", title=title, content=content, url=url,
-            happened_at=happened_at, tags=tags,
-        )
-        click.echo(f"{status}: id={entry_id} {title}")
-    finally:
-        conn.close()
-
-
-@ingest.command("memo")
-@click.option("--title", required=True, help="Memo title")
-@click.option("--content", required=True, help="Memo content")
+@main.command()
+@click.option("--title", required=True, help="Entry title")
+@click.option("--content", default=None, help="Entry content or excerpt")
+@click.option("--source", default="", help="Data source identifier (e.g. web, email, craft)")
+@click.option("--url", default=None, help="Related URL")
 @click.option("--tags", default="", help="Comma-separated tags")
 @click.option("--happened-at", default=None, help="When it happened (ISO 8601)")
-def ingest_memo(title, content, tags, happened_at):
-    """Ingest a memo."""
+def add(title, content, source, url, tags, happened_at):
+    """Add an entry."""
     conn = get_connection()
     try:
-        entry_id, status = ingest_entry(
-            conn, source="memo", title=title, content=content,
+        entry_id, status = save_entry(
+            conn, source=source, title=title, content=content, url=url,
             happened_at=happened_at, tags=tags,
         )
         click.echo(f"{status}: id={entry_id} {title}")
@@ -58,20 +40,17 @@ def ingest_memo(title, content, tags, happened_at):
         conn.close()
 
 
-@ingest.command("email")
-@click.option("--title", required=True, help="Email subject")
-@click.option("--content", required=True, help="Email body or excerpt")
-@click.option("--tags", default="", help="Comma-separated tags")
-@click.option("--happened-at", default=None, help="When received (ISO 8601)")
-def ingest_email(title, content, tags, happened_at):
-    """Ingest an email."""
+@main.command()
+def sources():
+    """List known data sources."""
     conn = get_connection()
     try:
-        entry_id, status = ingest_entry(
-            conn, source="email", title=title, content=content,
-            happened_at=happened_at, tags=tags,
-        )
-        click.echo(f"{status}: id={entry_id} {title}")
+        src_list = list_sources(conn)
+        if not src_list:
+            click.echo("No sources found.")
+            return
+        for s in src_list:
+            click.echo(f"  {s['source']}: {s['count']}")
     finally:
         conn.close()
 

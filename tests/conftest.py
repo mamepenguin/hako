@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = 256
 
 
 def _deterministic_vec(text: str) -> list[float]:
@@ -24,8 +24,8 @@ def _deterministic_vec(text: str) -> list[float]:
 @pytest.fixture()
 def tmp_data_dir(tmp_path, monkeypatch):
     """Override DATA_DIR and CONFIG_PATH to use tmp directory."""
-    monkeypatch.setattr("lifelog.config.DATA_DIR", tmp_path)
-    monkeypatch.setattr("lifelog.config.CONFIG_PATH", tmp_path / "config.toml")
+    monkeypatch.setattr("kura.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("kura.config.CONFIG_PATH", tmp_path / "config.toml")
     return tmp_path
 
 
@@ -39,6 +39,6 @@ def mock_embed(monkeypatch):
     def fake_embed_batch(texts: list[str]) -> list[list[float]]:
         return [_deterministic_vec(t) for t in texts]
 
-    monkeypatch.setattr("lifelog.embeddings.embed", fake_embed)
-    monkeypatch.setattr("lifelog.embeddings.embed_batch", fake_embed_batch)
+    monkeypatch.setattr("kura.embeddings.embed", fake_embed)
+    monkeypatch.setattr("kura.embeddings.embed_batch", fake_embed_batch)
     return fake_embed

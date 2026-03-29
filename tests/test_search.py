@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from lifelog.db import get_connection, insert_entry
-from lifelog.search import hybrid_search, _time_decay, _rrf_fusion, _build_fts_query
+from kura.db import get_connection, insert_entry
+from kura.search import hybrid_search, _time_decay, _rrf_fusion, _build_fts_query
 
 
 def _make_conn(tmp_data_dir):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lifelog.embeddings import make_embedding_input, serialize_vec, deserialize_vec
+from kura.embeddings import make_embedding_input, serialize_vec, deserialize_vec
 
 
 def test_make_embedding_input_title_only(tmp_data_dir):

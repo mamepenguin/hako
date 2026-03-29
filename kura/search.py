@@ -4,9 +4,9 @@ import math
 import sqlite3
 from datetime import datetime
 
-from lifelog.config import get_search_config
-from lifelog.db import _touch_accessed
-from lifelog.embeddings import embed, serialize_vec
+from kura.config import get_search_config
+from kura.db import _touch_accessed
+from kura.embeddings import embed, serialize_vec
 
 
 def hybrid_search(

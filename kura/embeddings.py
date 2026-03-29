@@ -6,16 +6,20 @@ import typing
 if typing.TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
 
-from lifelog.config import get_embedding_config
+from kura.config import get_embedding_config
 
 _model: SentenceTransformer | None = None
 
-EMBEDDING_DIM = 768
+EMBEDDING_DIM = 256
 
 
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:
+        import os
+
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
         from sentence_transformers import SentenceTransformer
 
         cfg = get_embedding_config()

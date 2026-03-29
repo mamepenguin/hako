@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from lifelog.db import (
+from kura.db import (
     get_connection,
     insert_entry,
     delete_entry,

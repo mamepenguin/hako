@@ -3,10 +3,10 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
-from lifelog.db import insert_entry
+from kura.db import insert_entry
 
 
-def ingest_entry(
+def save_entry(
     conn: sqlite3.Connection,
     *,
     source: str = "",
@@ -16,7 +16,7 @@ def ingest_entry(
     happened_at: str | None = None,
     tags: str = "",
 ) -> tuple[int, str]:
-    """High-level ingest with validation.
+    """High-level save with validation.
 
     Returns (entry_id, status) where status is 'created', 'updated', or 'skipped'.
     """
