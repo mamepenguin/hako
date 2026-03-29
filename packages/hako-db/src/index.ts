@@ -44,7 +44,10 @@ export class Hako {
     query: string,
     options?: SearchOptions,
   ): Promise<SearchResult[]> {
-    return hybridSearch(this.db, query, options);
+    return hybridSearch(this.db, query, {
+      ...options,
+      dbPath: this.resolvedDbPath,
+    });
   }
 
   get(id: number): Entry | null {

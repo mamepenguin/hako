@@ -44,7 +44,7 @@ describe("save", () => {
       title: "Test",
       content: "Content",
       source: "test",
-    });
+    }, { cachePath: join(tempDir, "embedding_cache.db") });
 
     expect(result.status).toBe("created");
     expect(result.id).toBeGreaterThan(0);
@@ -52,19 +52,19 @@ describe("save", () => {
 
   it("throws on empty title", async () => {
     await expect(
-      saveEntry(db, { title: "   " }),
+      saveEntry(db, { title: "   " }, { cachePath: join(tempDir, "embedding_cache.db") }),
     ).rejects.toThrow("title is required");
   });
 
   it("throws when web source has no url", async () => {
     await expect(
-      saveEntry(db, { title: "Test", source: "web" }),
+      saveEntry(db, { title: "Test", source: "web" }, { cachePath: join(tempDir, "embedding_cache.db") }),
     ).rejects.toThrow("url is required for source 'web'");
   });
 
   it("sets happened_at to now if not provided", async () => {
     const before = new Date().toISOString().slice(0, 16);
-    const result = await saveEntry(db, { title: "Auto time" });
+    const result = await saveEntry(db, { title: "Auto time" }, { cachePath: join(tempDir, "embedding_cache.db") });
 
     const entry = db
       .prepare("SELECT happened_at FROM entries WHERE id = ?")
@@ -74,16 +74,17 @@ describe("save", () => {
   });
 
   it("deduplicates by URL", async () => {
+    const cacheOpts = { cachePath: join(tempDir, "embedding_cache.db") };
     await saveEntry(db, {
       title: "First",
       source: "web",
       url: "https://example.com",
-    });
+    }, cacheOpts);
     const second = await saveEntry(db, {
       title: "Second",
       source: "web",
       url: "https://example.com",
-    });
+    }, cacheOpts);
 
     expect(second.status).toBe("updated");
   });

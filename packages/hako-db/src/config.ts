@@ -5,9 +5,7 @@ import TOML from "@iarna/toml";
 import type { HakoConfig, SearchConfig, EmbeddingConfig } from "./types.js";
 
 const DEFAULT_DATA_DIR = join(homedir(), ".hako");
-
-export const DATA_DIR = DEFAULT_DATA_DIR;
-export const CONFIG_PATH = join(DEFAULT_DATA_DIR, "config.toml");
+const CONFIG_FILENAME = "config.toml";
 
 /**
  * Resolve the database file path.
@@ -29,6 +27,21 @@ export function resolveCachePath(dbPath?: string): string {
   return join(dirname(resolvedDb), "embedding_cache.db");
 }
 
+/**
+ * Resolve config.toml path based on the database path.
+ * Priority: DB directory config.toml > ~/.hako/config.toml > undefined (use defaults)
+ */
+export function resolveConfigPath(dbPath?: string): string | undefined {
+  const resolvedDb = resolveDbPath(dbPath);
+  const localConfig = join(dirname(resolvedDb), CONFIG_FILENAME);
+  if (existsSync(localConfig)) return localConfig;
+
+  const globalConfig = join(DEFAULT_DATA_DIR, CONFIG_FILENAME);
+  if (existsSync(globalConfig)) return globalConfig;
+
+  return undefined;
+}
+
 const DEFAULT_CONFIG: HakoConfig = {
   search: {
     rrf_k: 60,
@@ -41,10 +54,10 @@ const DEFAULT_CONFIG: HakoConfig = {
   },
 };
 
-export function loadConfig(configPath?: string): HakoConfig {
-  const path = configPath ?? CONFIG_PATH;
+export function loadConfig(dbPath?: string): HakoConfig {
+  const path = resolveConfigPath(dbPath);
 
-  if (!existsSync(path)) {
+  if (!path) {
     return DEFAULT_CONFIG;
   }
 
@@ -60,10 +73,10 @@ export function loadConfig(configPath?: string): HakoConfig {
   };
 }
 
-export function getSearchConfig(configPath?: string): SearchConfig {
-  return loadConfig(configPath).search;
+export function getSearchConfig(dbPath?: string): SearchConfig {
+  return loadConfig(dbPath).search;
 }
 
-export function getEmbeddingConfig(configPath?: string): EmbeddingConfig {
-  return loadConfig(configPath).embedding;
+export function getEmbeddingConfig(dbPath?: string): EmbeddingConfig {
+  return loadConfig(dbPath).embedding;
 }

@@ -1,20 +1,16 @@
 import { createHash } from "node:crypto";
-import { join } from "node:path";
+import { dirname } from "node:path";
 import { mkdirSync } from "node:fs";
 import Database from "better-sqlite3";
-import { DATA_DIR } from "./config.js";
 import { serializeVec, deserializeVec } from "./embeddings.js";
-
-export const CACHE_PATH = join(DATA_DIR, "embedding_cache.db");
 
 function contentHash(content: string): string {
   return createHash("sha256").update(content, "utf-8").digest("hex");
 }
 
-function getCacheDb(cachePath?: string): Database.Database {
-  const path = cachePath ?? CACHE_PATH;
-  mkdirSync(join(path, ".."), { recursive: true });
-  const db = new Database(path);
+function getCacheDb(cachePath: string): Database.Database {
+  mkdirSync(dirname(cachePath), { recursive: true });
+  const db = new Database(cachePath);
   db.exec(`
     CREATE TABLE IF NOT EXISTS embedding_cache (
       content_hash TEXT PRIMARY KEY,
@@ -26,7 +22,7 @@ function getCacheDb(cachePath?: string): Database.Database {
 
 export function lookupBatch(
   contents: string[],
-  cachePath?: string,
+  cachePath: string,
 ): Map<string, number[] | null> {
   const db = getCacheDb(cachePath);
   try {
@@ -65,7 +61,7 @@ export function lookupBatch(
 
 export function storeBatch(
   items: Array<[string, number[]]>,
-  cachePath?: string,
+  cachePath: string,
 ): void {
   if (items.length === 0) return;
 

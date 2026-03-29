@@ -7,9 +7,9 @@ import type { Entry, SearchResult } from "./types.js";
 export async function hybridSearch(
   db: Database.Database,
   query: string,
-  opts?: { source?: string; limit?: number; configPath?: string },
+  opts?: { source?: string; limit?: number; dbPath?: string },
 ): Promise<SearchResult[]> {
-  const cfg = getSearchConfig(opts?.configPath);
+  const cfg = getSearchConfig(opts?.dbPath);
   const source = opts?.source ?? "";
   const limit = opts?.limit ?? 10;
 

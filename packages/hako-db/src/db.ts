@@ -2,7 +2,6 @@ import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { resolveDbPath } from "./config.js";
 import {
   EMBEDDING_DIM,
   embed,
@@ -11,8 +10,6 @@ import {
 } from "./embeddings.js";
 import { storeBatch as cacheStoreBatch } from "./embedding-cache.js";
 import type { Entry, SourceCount, Stats } from "./types.js";
-
-export const DB_PATH = resolveDbPath();
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS entries (
@@ -62,10 +59,9 @@ CREATE INDEX IF NOT EXISTS idx_entries_happened_at ON entries(happened_at);
 CREATE INDEX IF NOT EXISTS idx_entries_source ON entries(source);
 `;
 
-export function getConnection(dbPath?: string): Database.Database {
-  const path = dbPath ?? DB_PATH;
-  mkdirSync(dirname(path), { recursive: true });
-  const db = new Database(path);
+export function getConnection(dbPath: string): Database.Database {
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
   sqliteVec.load(db);
   ensureSchema(db);
@@ -85,7 +81,7 @@ export async function insertEntry(
     url?: string | null;
     happened_at: string;
     tags?: string;
-    cachePath?: string;
+    cachePath: string;
   },
 ): Promise<{ id: number; status: "created" | "updated" | "skipped" }> {
   const source = opts.source ?? "";
@@ -216,9 +212,8 @@ export function listEntries(
 
 export function getStats(
   db: Database.Database,
-  dbPath?: string,
+  dbPath: string,
 ): Stats {
-  const path = dbPath ?? DB_PATH;
   const total = (
     db.prepare("SELECT COUNT(*) as c FROM entries").get() as { c: number }
   ).c;
@@ -231,7 +226,7 @@ export function getStats(
 
   let dbSize = 0;
   try {
-    dbSize = statSync(path).size;
+    dbSize = statSync(dbPath).size;
   } catch {
     // file may not exist yet
   }
