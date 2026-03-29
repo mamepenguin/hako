@@ -2,12 +2,12 @@ import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import TOML from "@iarna/toml";
-import type { KuraConfig, SearchConfig, EmbeddingConfig } from "./types.js";
+import type { HakoConfig, SearchConfig, EmbeddingConfig } from "./types.js";
 
-export const DATA_DIR = join(homedir(), ".kura");
+export const DATA_DIR = join(homedir(), ".hako");
 export const CONFIG_PATH = join(DATA_DIR, "config.toml");
 
-const DEFAULT_CONFIG: KuraConfig = {
+const DEFAULT_CONFIG: HakoConfig = {
   search: {
     rrf_k: 60,
     time_decay_half_life_days: 180.0,
@@ -19,7 +19,7 @@ const DEFAULT_CONFIG: KuraConfig = {
   },
 };
 
-export function loadConfig(configPath?: string): KuraConfig {
+export function loadConfig(configPath?: string): HakoConfig {
   const path = configPath ?? CONFIG_PATH;
 
   if (!existsSync(path)) {

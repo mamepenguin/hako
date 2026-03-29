@@ -40,7 +40,7 @@ describe("db", () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "kura-db-test-"));
+    tempDir = mkdtempSync(join(tmpdir(), "hako-db-test-"));
     dbPath = join(tempDir, "test.db");
     db = getConnection(dbPath);
   });

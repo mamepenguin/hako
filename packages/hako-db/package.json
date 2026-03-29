@@ -1,5 +1,5 @@
 {
-  "name": "kura",
+  "name": "hako-db",
   "version": "0.1.0",
   "description": "Data store with hybrid search (FTS5 + vector)",
   "type": "module",

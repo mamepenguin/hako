@@ -1,10 +1,10 @@
 {
-  "name": "kura-cli",
+  "name": "hako-cli",
   "version": "0.1.0",
-  "description": "CLI for kura data store",
+  "description": "CLI for hako data store",
   "type": "module",
   "bin": {
-    "kura": "./dist/index.js"
+    "hako": "./dist/index.js"
   },
   "files": [
     "dist"
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "commander": "^13.0.0",
-    "kura": "workspace:*"
+    "hako-db": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

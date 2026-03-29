@@ -12,7 +12,7 @@ import {
 import { storeBatch as cacheStoreBatch } from "./embedding-cache.js";
 import type { Entry, SourceCount, Stats } from "./types.js";
 
-export const DB_PATH = join(DATA_DIR, "kura.db");
+export const DB_PATH = join(DATA_DIR, "hako.db");
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS entries (

@@ -2,7 +2,7 @@ import * as cheerio from "cheerio";
 import type { PageInfo } from "../types.js";
 
 const HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) kura/0.1",
+  "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) hako/0.1",
   Accept: "text/html,application/xhtml+xml",
 };
 

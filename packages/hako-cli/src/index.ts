@@ -1,12 +1,12 @@
 import { Command } from "commander";
-import { Kura, fetchPage } from "kura";
-import type { Entry, SearchResult } from "kura";
+import { Hako, fetchPage } from "hako-db";
+import type { Entry, SearchResult } from "hako-db";
 
 const program = new Command();
 
 program
-  .name("kura")
-  .description("Kura: data store with hybrid search")
+  .name("hako")
+  .description("Hako: data store with hybrid search")
   .version("0.1.0");
 
 program
@@ -19,9 +19,9 @@ program
   .option("--tags <tags>", "Comma-separated tags", "")
   .option("--happened-at <date>", "When it happened (ISO 8601)")
   .action(async (opts) => {
-    const kura = new Kura();
+    const hako = new Hako();
     try {
-      const result = await kura.save({
+      const result = await hako.save({
         title: opts.title,
         content: opts.content ?? null,
         source: opts.source,
@@ -34,7 +34,7 @@ program
       console.error(`Error: ${(err as Error).message}`);
       process.exit(1);
     } finally {
-      kura.close();
+      hako.close();
     }
   });
 
@@ -44,9 +44,9 @@ program
   .option("--source <source>", "Filter by source")
   .option("--limit <n>", "Max results", "10")
   .action(async (query: string, opts) => {
-    const kura = new Kura();
+    const hako = new Hako();
     try {
-      const results = await kura.search(query, {
+      const results = await hako.search(query, {
         source: opts.source,
         limit: parseInt(opts.limit, 10),
       });
@@ -58,7 +58,7 @@ program
         printEntrySummary(r);
       }
     } finally {
-      kura.close();
+      hako.close();
     }
   });
 
@@ -70,9 +70,9 @@ program
   .option("--until <date>", "To date (ISO 8601)")
   .option("--limit <n>", "Max results", "20")
   .action((opts) => {
-    const kura = new Kura();
+    const hako = new Hako();
     try {
-      const entries = kura.list({
+      const entries = hako.list({
         source: opts.source,
         since: opts.since,
         until: opts.until,
@@ -86,7 +86,7 @@ program
         printEntrySummary(e);
       }
     } finally {
-      kura.close();
+      hako.close();
     }
   });
 
@@ -94,16 +94,16 @@ program
   .command("show <id>")
   .description("Show entry details")
   .action((id: string) => {
-    const kura = new Kura();
+    const hako = new Hako();
     try {
-      const entry = kura.get(parseInt(id, 10));
+      const entry = hako.get(parseInt(id, 10));
       if (!entry) {
         console.log(`Entry ${id} not found.`);
         return;
       }
       printEntryDetail(entry);
     } finally {
-      kura.close();
+      hako.close();
     }
   });
 
@@ -133,15 +133,15 @@ program
       }
     }
 
-    const kura = new Kura();
+    const hako = new Hako();
     try {
-      if (kura.delete(entryId)) {
+      if (hako.delete(entryId)) {
         console.log(`Deleted entry ${id}.`);
       } else {
         console.log(`Entry ${id} not found.`);
       }
     } finally {
-      kura.close();
+      hako.close();
     }
   });
 
@@ -149,9 +149,9 @@ program
   .command("sources")
   .description("List known data sources")
   .action(() => {
-    const kura = new Kura();
+    const hako = new Hako();
     try {
-      const sources = kura.sources();
+      const sources = hako.sources();
       if (sources.length === 0) {
         console.log("No sources found.");
         return;
@@ -160,7 +160,7 @@ program
         console.log(`  ${s.source}: ${s.count}`);
       }
     } finally {
-      kura.close();
+      hako.close();
     }
   });
 
@@ -168,9 +168,9 @@ program
   .command("stats")
   .description("Show database statistics")
   .action(() => {
-    const kura = new Kura();
+    const hako = new Hako();
     try {
-      const s = kura.stats();
+      const s = hako.stats();
       console.log(`Total entries: ${s.total_entries}`);
       console.log(`DB size: ${s.db_size_mb} MB`);
       if (s.sources.length > 0) {
@@ -180,7 +180,7 @@ program
         }
       }
     } finally {
-      kura.close();
+      hako.close();
     }
   });
 
@@ -192,7 +192,7 @@ program
   .option("--tags <tags>", "Comma-separated tags", "")
   .option("--happened-at <date>", "When you saw it (ISO 8601)")
   .action(async (url: string, opts) => {
-    const kura = new Kura();
+    const hako = new Hako();
     try {
       let title = opts.title ?? "";
       let content = opts.content ?? null;
@@ -208,7 +208,7 @@ program
         if (!title) title = url;
       }
 
-      const result = await kura.save({
+      const result = await hako.save({
         title,
         content,
         source: "web",
@@ -218,7 +218,7 @@ program
       });
       console.log(`${result.status}: id=${result.id} ${title}`);
     } finally {
-      kura.close();
+      hako.close();
     }
   });
 

@@ -15,7 +15,26 @@ importers:
         specifier: ^3.2.4
         version: 3.2.4(@types/node@25.5.0)
 
-  packages/kura:
+  packages/hako-cli:
+    dependencies:
+      commander:
+        specifier: ^13.0.0
+        version: 13.1.0
+      hako-db:
+        specifier: workspace:*
+        version: link:../hako-db
+    devDependencies:
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^3.0.0
+        version: 3.2.4(@types/node@25.5.0)
+
+  packages/hako-db:
     dependencies:
       '@huggingface/transformers':
         specifier: ^3.8.1
@@ -36,25 +55,6 @@ importers:
       '@types/better-sqlite3':
         specifier: ^7.6.0
         version: 7.6.13
-      tsup:
-        specifier: ^8.0.0
-        version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-      vitest:
-        specifier: ^3.0.0
-        version: 3.2.4(@types/node@25.5.0)
-
-  packages/kura-cli:
-    dependencies:
-      commander:
-        specifier: ^13.0.0
-        version: 13.1.0
-      kura:
-        specifier: workspace:*
-        version: link:../kura
-    devDependencies:
       tsup:
         specifier: ^8.0.0
         version: 8.5.1(postcss@8.5.8)(typescript@5.9.3)

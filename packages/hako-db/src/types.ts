@@ -64,7 +64,7 @@ export interface EmbeddingConfig {
   readonly max_content_chars: number;
 }
 
-export interface KuraConfig {
+export interface HakoConfig {
   readonly search: SearchConfig;
   readonly embedding: EmbeddingConfig;
 }

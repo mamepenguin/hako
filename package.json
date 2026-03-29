@@ -1,6 +1,11 @@
 {
   "private": true,
   "type": "module",
+  "scripts": {
+    "hako": "node packages/hako-cli/dist/index.js",
+    "build": "pnpm --filter hako-db build && pnpm --filter hako-cli build",
+    "test": "pnpm --filter hako-db test"
+  },
   "engines": {
     "node": ">=20.0.0"
   },

@@ -32,7 +32,7 @@ describe("search", () => {
   let db: Database.Database;
 
   beforeEach(async () => {
-    tempDir = mkdtempSync(join(tmpdir(), "kura-search-test-"));
+    tempDir = mkdtempSync(join(tmpdir(), "hako-search-test-"));
     dbPath = join(tempDir, "test.db");
     db = getConnection(dbPath);
 

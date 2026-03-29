@@ -21,24 +21,24 @@ vi.mock("../src/embedding-cache.js", () => ({
   storeBatch: vi.fn(),
 }));
 
-import { Kura } from "../src/index.js";
+import { Hako } from "../src/index.js";
 
-describe("Kura", () => {
+describe("Hako", () => {
   let tempDir: string;
-  let kura: Kura;
+  let hako: Hako;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "kura-api-test-"));
-    kura = new Kura({ dbPath: join(tempDir, "test.db") });
+    tempDir = mkdtempSync(join(tmpdir(), "hako-api-test-"));
+    hako = new Hako({ dbPath: join(tempDir, "test.db") });
   });
 
   afterEach(() => {
-    kura.close();
+    hako.close();
     rmSync(tempDir, { recursive: true });
   });
 
   it("saves and retrieves an entry", async () => {
-    const result = await kura.save({
+    const result = await hako.save({
       title: "Test Entry",
       content: "Some content",
       source: "test",
@@ -46,46 +46,46 @@ describe("Kura", () => {
 
     expect(result.status).toBe("created");
 
-    const entry = kura.get(result.id);
+    const entry = hako.get(result.id);
     expect(entry).not.toBeNull();
     expect(entry!.title).toBe("Test Entry");
   });
 
   it("searches entries", async () => {
-    await kura.save({ title: "Node.js入門", content: "JavaScript runtime" });
-    await kura.save({ title: "Python入門", content: "Programming language" });
+    await hako.save({ title: "Node.js入門", content: "JavaScript runtime" });
+    await hako.save({ title: "Python入門", content: "Programming language" });
 
-    const results = await kura.search("Node.js");
+    const results = await hako.search("Node.js");
     expect(results.length).toBeGreaterThan(0);
     expect(results[0]).toHaveProperty("score");
   });
 
   it("lists entries", async () => {
-    await kura.save({ title: "Entry 1" });
-    await kura.save({ title: "Entry 2" });
+    await hako.save({ title: "Entry 1" });
+    await hako.save({ title: "Entry 2" });
 
-    const entries = kura.list();
+    const entries = hako.list();
     expect(entries).toHaveLength(2);
   });
 
   it("deletes an entry", async () => {
-    const { id } = await kura.save({ title: "To delete" });
-    expect(kura.delete(id)).toBe(true);
-    expect(kura.get(id)).toBeNull();
+    const { id } = await hako.save({ title: "To delete" });
+    expect(hako.delete(id)).toBe(true);
+    expect(hako.get(id)).toBeNull();
   });
 
   it("returns sources", async () => {
-    await kura.save({ title: "A", source: "web", url: "https://a.com" });
-    await kura.save({ title: "B", source: "memo" });
+    await hako.save({ title: "A", source: "web", url: "https://a.com" });
+    await hako.save({ title: "B", source: "memo" });
 
-    const sources = kura.sources();
+    const sources = hako.sources();
     expect(sources.length).toBeGreaterThan(0);
   });
 
   it("returns stats", async () => {
-    await kura.save({ title: "Test" });
+    await hako.save({ title: "Test" });
 
-    const stats = kura.stats();
+    const stats = hako.stats();
     expect(stats.total_entries).toBe(1);
   });
 });

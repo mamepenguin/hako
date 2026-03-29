@@ -20,15 +20,15 @@ import type {
   Stats,
 } from "./types.js";
 
-export interface KuraOptions {
+export interface HakoOptions {
   readonly dbPath?: string;
 }
 
-export class Kura {
+export class Hako {
   private readonly db: Database.Database;
   private readonly dbPath: string | undefined;
 
-  constructor(options?: KuraOptions) {
+  constructor(options?: HakoOptions) {
     this.dbPath = options?.dbPath;
     this.db = getConnection(this.dbPath);
   }

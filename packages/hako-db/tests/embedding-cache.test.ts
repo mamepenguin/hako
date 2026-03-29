@@ -9,7 +9,7 @@ describe("embedding-cache", () => {
   let cachePath: string;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "kura-cache-test-"));
+    tempDir = mkdtempSync(join(tmpdir(), "hako-cache-test-"));
     cachePath = join(tempDir, "cache.db");
   });
 

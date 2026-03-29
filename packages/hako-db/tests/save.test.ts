@@ -30,7 +30,7 @@ describe("save", () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "kura-save-test-"));
+    tempDir = mkdtempSync(join(tmpdir(), "hako-save-test-"));
     db = getConnection(join(tempDir, "test.db"));
   });
 

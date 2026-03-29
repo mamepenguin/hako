@@ -8,7 +8,7 @@ describe("config", () => {
   let tempDir: string;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(join(tmpdir(), "kura-test-"));
+    tempDir = mkdtempSync(join(tmpdir(), "hako-test-"));
   });
 
   afterEach(() => {
