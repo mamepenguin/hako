@@ -144,10 +144,10 @@ function migrateToNanoId(db: Database.Database): void {
         scope         TEXT NOT NULL DEFAULT 'default',
         priority      TEXT NOT NULL DEFAULT 'normal',
         happened_at   TEXT NOT NULL,
-        created_at    TEXT NOT NULL,
+        created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')),
         updated_at    TEXT,
         tags          TEXT DEFAULT '',
-        accessed_at   TEXT NOT NULL,
+        accessed_at   TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')),
         access_count  INTEGER DEFAULT 0
     );
   `);
@@ -283,9 +283,11 @@ export async function insertEntry(
   // New entry
   const entryId = opts.id ?? nanoid();
 
+  const now = new Date().toISOString().slice(0, 19);
+
   db.prepare(
-    `INSERT INTO entries (id, source, title, content, url, namespace, scope, priority, happened_at, tags)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO entries (id, source, title, content, url, namespace, scope, priority, happened_at, created_at, accessed_at, tags)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     entryId,
     source,
@@ -296,6 +298,8 @@ export async function insertEntry(
     scope,
     priority,
     opts.happened_at,
+    now,
+    now,
     tags,
   );
 
