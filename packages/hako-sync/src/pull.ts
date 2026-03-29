@@ -1,7 +1,7 @@
 import type { Hako } from "hako-db";
 import type { Scope, Priority } from "hako-db";
 import { loadState, saveState } from "./state.js";
-import { readOps, listMachines } from "./oplog.js";
+import { readOps, readEpoch, listMachines } from "./oplog.js";
 import { gitPull } from "./git.js";
 import type { SyncConfig, OpAdd, PullResult } from "./types.js";
 
@@ -32,14 +32,20 @@ export async function pull(
   let deleted = 0;
   let skipped = 0;
   const newOffsets: Record<string, number> = { ...state.offsets };
+  const newEpochs: Record<string, number> = { ...state.epochs };
 
   // Collect all ops from other machines
   const deleteIds = new Set<string>();
   const addOps: OpAdd[] = [];
 
   for (const machine of machines) {
-    const offset = state.offsets[machine] ?? 0;
+    const savedOffset = state.offsets[machine] ?? 0;
+    const savedEpoch = state.epochs[machine] ?? 0;
+    const currentEpoch = readEpoch(config.repo, machine);
+    // Detect compaction: epoch changed → read from beginning
+    const offset = currentEpoch !== savedEpoch ? 0 : savedOffset;
     const { ops, newOffset } = readOps(config.repo, machine, offset);
+    newEpochs[machine] = currentEpoch;
     newOffsets[machine] = newOffset;
 
     for (const op of ops) {
@@ -110,6 +116,7 @@ export async function pull(
       ...state,
       last_push_ids: hako.allIds(),
       offsets: newOffsets,
+      epochs: newEpochs,
     },
     dbPath,
   );

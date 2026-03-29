@@ -23,5 +23,9 @@ export function loadSyncConfig(dbPath?: string): SyncConfig | null {
       typeof sync["import_max_age_days"] === "number"
         ? sync["import_max_age_days"]
         : 90,
+    compaction_threshold:
+      typeof sync["compaction_threshold"] === "number"
+        ? sync["compaction_threshold"]
+        : 2000,
   };
 }

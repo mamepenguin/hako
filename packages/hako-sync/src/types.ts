@@ -2,6 +2,7 @@ export interface SyncConfig {
   readonly repo: string;
   readonly machine_id: string;
   readonly import_max_age_days: number;
+  readonly compaction_threshold: number;
 }
 
 export interface SyncEntry {
@@ -36,12 +37,14 @@ export interface SyncState {
   readonly machine_id: string;
   readonly last_push_ids: readonly string[];
   readonly offsets: Readonly<Record<string, number>>;
+  readonly epochs: Readonly<Record<string, number>>;
 }
 
 export interface PushResult {
   readonly added: number;
   readonly deleted: number;
   readonly committed: boolean;
+  readonly compacted: boolean;
 }
 
 export interface PullResult {

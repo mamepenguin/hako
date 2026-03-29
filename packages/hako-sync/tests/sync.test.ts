@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { Hako } from "hako-db";
 import { push, pull } from "../src/index.js";
+import { countOps } from "../src/oplog.js";
 import type { SyncConfig } from "../src/types.js";
 
 // Mock embeddings to avoid model download
@@ -54,12 +55,14 @@ beforeEach(() => {
     repo: syncRepo,
     machine_id: "machine-a",
     import_max_age_days: 90,
+    compaction_threshold: 2000,
   };
 
   configB = {
     repo: syncRepo,
     machine_id: "machine-b",
     import_max_age_days: 90,
+    compaction_threshold: 2000,
   };
 });
 
@@ -171,6 +174,105 @@ describe("prune + sync", () => {
 
     expect(pushResult.deleted).toBe(1);
     expect(pushResult.added).toBe(0);
+  });
+
+  it("compacted flag is false when below threshold", async () => {
+    await hakoA.save({ title: "Entry 1", source: "test" });
+    const result = await push(hakoA, configA, dbPathA);
+    expect(result.compacted).toBe(false);
+  });
+});
+
+describe("compaction", () => {
+  it("compacts ops.jsonl when threshold exceeded", async () => {
+    // Use a low threshold for testing
+    const lowThresholdConfig: SyncConfig = {
+      ...configA,
+      compaction_threshold: 5,
+    };
+
+    // Push multiple entries to exceed threshold
+    for (let i = 0; i < 4; i++) {
+      await hakoA.save({ title: `Entry ${i}`, source: "test" });
+    }
+    await push(hakoA, lowThresholdConfig, dbPathA);
+
+    // Delete 2 entries to add more ops
+    const entries = hakoA.list({ limit: 10 });
+    hakoA.delete(entries[0].id);
+    hakoA.delete(entries[1].id);
+    // Now push with 2 new delete ops → total ops should exceed 5
+    const result = await push(hakoA, lowThresholdConfig, dbPathA);
+    expect(result.compacted).toBe(true);
+
+    // After compaction, ops count should equal current DB entries (2 remaining)
+    const opsCount = countOps(syncRepo, "machine-a");
+    expect(opsCount).toBe(2);
+  });
+
+  it("compaction preserves all current entries", async () => {
+    const lowThresholdConfig: SyncConfig = {
+      ...configA,
+      compaction_threshold: 3,
+    };
+
+    // Save 3 entries and push (exceeds threshold of 3)
+    await hakoA.save({ title: "Keep A", source: "test" });
+    await hakoA.save({ title: "Keep B", source: "test" });
+    await hakoA.save({ title: "Keep C", source: "test" });
+    const result = await push(hakoA, lowThresholdConfig, dbPathA);
+    expect(result.compacted).toBe(true);
+
+    // All entries should be readable from the compacted oplog
+    const { ops } = await import("../src/oplog.js").then((m) =>
+      m.readOps(syncRepo, "machine-a"),
+    );
+    expect(ops).toHaveLength(3);
+    const titles = ops.map((o) => (o.op === "add" ? o.entry.title : "")).sort();
+    expect(titles).toEqual(["Keep A", "Keep B", "Keep C"]);
+  });
+
+  it("pull detects compaction and resets offset", async () => {
+    const lowThresholdConfig: SyncConfig = {
+      ...configA,
+      compaction_threshold: 5,
+    };
+
+    // A saves entries and remembers their IDs for later deletion
+    const savedIds: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await hakoA.save({ title: `Entry ${i}`, source: "test" });
+      savedIds.push(r.id);
+    }
+    await push(hakoA, lowThresholdConfig, dbPathA); // 3 ops
+
+    // B pulls and gets all 3
+    const pull1 = await pull(hakoB, configB, dbPathB);
+    expect(pull1.added).toBe(3);
+
+    // A adds more entries (push them so they're tracked)
+    for (let i = 3; i < 5; i++) {
+      await hakoA.save({ title: `Entry ${i}`, source: "test" });
+    }
+    await push(hakoA, lowThresholdConfig, dbPathA); // +2 ops = 5 total, compaction triggers
+
+    // Delete 2 previously-pushed entries and push again
+    hakoA.delete(savedIds[0]);
+    hakoA.delete(savedIds[1]);
+    const pushResult = await push(hakoA, lowThresholdConfig, dbPathA);
+    // After compaction, oplog is rewritten with current 3 entries (5-2)
+    expect(pushResult.compacted).toBe(true);
+
+    // B pulls after compaction — offset reset reads snapshot from 0
+    const pull2 = await pull(hakoB, configB, dbPathB);
+    // Snapshot only contains add ops for current entries (3 remaining on A).
+    // B already has entries 0,1,2 from pull1; entries 3,4 are new.
+    // Delete ops are lost in compaction — B keeps entries 0,1 until B prunes.
+    expect(pull2.added).toBe(2);
+    expect(pull2.deleted).toBe(0);
+
+    // B has 5 (3 original + 2 new). Entries 0,1 still on B (prune handles cleanup).
+    expect(hakoB.list({ limit: 20 })).toHaveLength(5);
   });
 
   it("age filter skips old entries on pull", async () => {

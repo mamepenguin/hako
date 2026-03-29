@@ -19,6 +19,7 @@ export function loadState(
       machine_id: machineId,
       last_push_ids: [],
       offsets: {},
+      epochs: {},
     };
   }
 
@@ -29,6 +30,7 @@ export function loadState(
     machine_id: machineId,
     last_push_ids: data.last_push_ids ?? [],
     offsets: data.offsets ?? {},
+    epochs: data.epochs ?? {},
   };
 }
 
