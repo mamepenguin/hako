@@ -48,6 +48,9 @@ hako delete 42
 # Stats
 hako stats
 hako sources
+
+# Use a different database
+hako --db ~/work/hako.db search "meeting"
 ```
 
 ## Library Usage
@@ -55,7 +58,11 @@ hako sources
 ```typescript
 import { Hako } from 'hako-db'
 
+// Default: ~/.hako/hako.db
 const hako = new Hako()
+
+// Custom database path
+const workHako = new Hako({ dbPath: '/path/to/work/hako.db' })
 
 // Save
 const { id, status } = await hako.save({
@@ -90,14 +97,33 @@ Embedding model: [ruri-v3-30m-ONNX](https://huggingface.co/sirasagi62/ruri-v3-30
 
 | Path | Purpose |
 |------|---------|
-| `~/.hako/hako.db` | Main database |
-| `~/.hako/embedding_cache.db` | Embedding cache |
-| `~/.hako/config.toml` | User config (optional) |
+| `~/.hako/hako.db` | Main database (default) |
+| `~/.hako/embedding_cache.db` | Embedding cache (follows DB directory) |
+| `~/.hako/config.toml` | User config (optional, always global) |
 | `~/.cache/huggingface/hub/` | ONNX model cache |
+
+## Multiple Databases
+
+Use `--db` flag or `HAKO_DB` environment variable to switch databases. The embedding cache is automatically placed alongside the database file.
+
+Priority: `--db` flag > `HAKO_DB` env > `~/.hako/hako.db`
+
+```bash
+# Per-command
+hako --db ~/work/hako.db add --title "Work note" --source work
+
+# Environment variable
+export HAKO_DB=~/work/hako.db
+hako search "meeting"
+
+# Per-project with direnv
+echo 'export HAKO_DB=$PWD/.hako/hako.db' > .envrc
+direnv allow
+```
 
 ## Configuration
 
-Optional `~/.hako/config.toml`:
+Optional `~/.hako/config.toml` (shared across all databases):
 
 ```toml
 [search]
@@ -113,7 +139,7 @@ max_content_chars = 500
 ## Development
 
 ```bash
-pnpm --filter hako-db test       # Run tests (48 tests, mocked embeddings)
+pnpm --filter hako-db test       # Run tests (54 tests, mocked embeddings)
 pnpm --filter hako-db test:watch # Watch mode
 pnpm --filter hako-db build      # Build library
 pnpm --filter hako-cli build     # Build CLI

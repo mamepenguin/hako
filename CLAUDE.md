@@ -7,7 +7,7 @@ Japanese text optimized. SQLite single-file DB.
 
 ```bash
 pnpm install                    # Install dependencies
-pnpm --filter hako-db test      # Run library tests (48 tests)
+pnpm --filter hako-db test      # Run library tests (54 tests)
 pnpm --filter hako-db build     # Build library
 pnpm --filter hako-cli build    # Build CLI
 ```
@@ -27,7 +27,7 @@ Dependency direction: hako-cli → hako-db (never reverse).
 |------|---------------|
 | `index.ts` | `Hako` class — public API wrapping all modules |
 | `types.ts` | All TypeScript interfaces (`Entry`, `SearchResult`, `SaveInput`, etc.) |
-| `config.ts` | Loads `~/.hako/config.toml`, merges with defaults |
+| `config.ts` | Loads `~/.hako/config.toml`, merges with defaults, path resolution (`resolveDbPath`, `resolveCachePath`) |
 | `db.ts` | SQLite schema (entries + FTS5 trigram + vec0), CRUD operations |
 | `search.ts` | Hybrid search: FTS5 + vec0 → RRF fusion → time decay |
 | `save.ts` | Validation + deduplication (by URL or content) |
@@ -48,10 +48,12 @@ Dependency direction: hako-cli → hako-db (never reverse).
 
 ## Data Locations
 
-- `~/.hako/hako.db` — Main database
-- `~/.hako/embedding_cache.db` — Embedding cache
-- `~/.hako/config.toml` — User config (optional)
+- `~/.hako/hako.db` — Main database (default)
+- `~/.hako/embedding_cache.db` — Embedding cache (follows DB directory)
+- `~/.hako/config.toml` — User config (optional, always global)
 - `~/.cache/huggingface/hub/` — Downloaded ONNX model (managed by Transformers.js)
+
+DB path is configurable: `--db` flag > `HAKO_DB` env > `~/.hako/hako.db`. Embedding cache is auto-placed in the same directory as the DB file.
 
 ## DB Schema
 

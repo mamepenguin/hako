@@ -2,7 +2,7 @@ import { mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
-import { DATA_DIR } from "./config.js";
+import { resolveDbPath } from "./config.js";
 import {
   EMBEDDING_DIM,
   embed,
@@ -12,7 +12,7 @@ import {
 import { storeBatch as cacheStoreBatch } from "./embedding-cache.js";
 import type { Entry, SourceCount, Stats } from "./types.js";
 
-export const DB_PATH = join(DATA_DIR, "hako.db");
+export const DB_PATH = resolveDbPath();
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS entries (
@@ -85,6 +85,7 @@ export async function insertEntry(
     url?: string | null;
     happened_at: string;
     tags?: string;
+    cachePath?: string;
   },
 ): Promise<{ id: number; status: "created" | "updated" | "skipped" }> {
   const source = opts.source ?? "";
@@ -94,7 +95,7 @@ export async function insertEntry(
 
   const embeddingInput = makeEmbeddingInput(opts.title, content);
   const vec = await embed(embeddingInput);
-  cacheStoreBatch([[embeddingInput, vec]]);
+  cacheStoreBatch([[embeddingInput, vec]], opts.cachePath);
   const serialized = serializeVec(vec);
 
   // URL dedup: update existing entry

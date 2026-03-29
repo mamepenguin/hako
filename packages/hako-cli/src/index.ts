@@ -7,7 +7,12 @@ const program = new Command();
 program
   .name("hako")
   .description("Hako: data store with hybrid search")
-  .version("0.1.0");
+  .version("0.1.0")
+  .option("--db <path>", "Path to database file (overrides HAKO_DB env)");
+
+function getDbPath(): string | undefined {
+  return program.opts().db as string | undefined;
+}
 
 program
   .command("add")
@@ -19,7 +24,7 @@ program
   .option("--tags <tags>", "Comma-separated tags", "")
   .option("--happened-at <date>", "When it happened (ISO 8601)")
   .action(async (opts) => {
-    const hako = new Hako();
+    const hako = new Hako({ dbPath: getDbPath() });
     try {
       const result = await hako.save({
         title: opts.title,
@@ -44,7 +49,7 @@ program
   .option("--source <source>", "Filter by source")
   .option("--limit <n>", "Max results", "10")
   .action(async (query: string, opts) => {
-    const hako = new Hako();
+    const hako = new Hako({ dbPath: getDbPath() });
     try {
       const results = await hako.search(query, {
         source: opts.source,
@@ -70,7 +75,7 @@ program
   .option("--until <date>", "To date (ISO 8601)")
   .option("--limit <n>", "Max results", "20")
   .action((opts) => {
-    const hako = new Hako();
+    const hako = new Hako({ dbPath: getDbPath() });
     try {
       const entries = hako.list({
         source: opts.source,
@@ -94,7 +99,7 @@ program
   .command("show <id>")
   .description("Show entry details")
   .action((id: string) => {
-    const hako = new Hako();
+    const hako = new Hako({ dbPath: getDbPath() });
     try {
       const entry = hako.get(parseInt(id, 10));
       if (!entry) {
@@ -133,7 +138,7 @@ program
       }
     }
 
-    const hako = new Hako();
+    const hako = new Hako({ dbPath: getDbPath() });
     try {
       if (hako.delete(entryId)) {
         console.log(`Deleted entry ${id}.`);
@@ -149,7 +154,7 @@ program
   .command("sources")
   .description("List known data sources")
   .action(() => {
-    const hako = new Hako();
+    const hako = new Hako({ dbPath: getDbPath() });
     try {
       const sources = hako.sources();
       if (sources.length === 0) {
@@ -168,7 +173,7 @@ program
   .command("stats")
   .description("Show database statistics")
   .action(() => {
-    const hako = new Hako();
+    const hako = new Hako({ dbPath: getDbPath() });
     try {
       const s = hako.stats();
       console.log(`Total entries: ${s.total_entries}`);
@@ -192,7 +197,7 @@ program
   .option("--tags <tags>", "Comma-separated tags", "")
   .option("--happened-at <date>", "When you saw it (ISO 8601)")
   .action(async (url: string, opts) => {
-    const hako = new Hako();
+    const hako = new Hako({ dbPath: getDbPath() });
     try {
       let title = opts.title ?? "";
       let content = opts.content ?? null;

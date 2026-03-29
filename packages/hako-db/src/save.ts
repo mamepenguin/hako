@@ -5,6 +5,7 @@ import type { SaveInput, SaveOutput } from "./types.js";
 export async function saveEntry(
   db: Database.Database,
   input: SaveInput,
+  opts?: { cachePath?: string },
 ): Promise<SaveOutput> {
   if (!input.title.trim()) {
     throw new Error("title is required");
@@ -25,5 +26,6 @@ export async function saveEntry(
     url: input.url ?? null,
     happened_at: happenedAt,
     tags: input.tags ?? "",
+    cachePath: opts?.cachePath,
   });
 }

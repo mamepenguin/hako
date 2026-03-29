@@ -1,11 +1,33 @@
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import TOML from "@iarna/toml";
 import type { HakoConfig, SearchConfig, EmbeddingConfig } from "./types.js";
 
-export const DATA_DIR = join(homedir(), ".hako");
-export const CONFIG_PATH = join(DATA_DIR, "config.toml");
+const DEFAULT_DATA_DIR = join(homedir(), ".hako");
+
+export const DATA_DIR = DEFAULT_DATA_DIR;
+export const CONFIG_PATH = join(DEFAULT_DATA_DIR, "config.toml");
+
+/**
+ * Resolve the database file path.
+ * Priority: explicit dbPath > HAKO_DB env > ~/.hako/hako.db
+ */
+export function resolveDbPath(dbPath?: string): string {
+  if (dbPath) return dbPath;
+  const envDb = process.env.HAKO_DB;
+  if (envDb) return envDb;
+  return join(DEFAULT_DATA_DIR, "hako.db");
+}
+
+/**
+ * Resolve the embedding cache path based on the database path.
+ * Cache lives in the same directory as the database file.
+ */
+export function resolveCachePath(dbPath?: string): string {
+  const resolvedDb = resolveDbPath(dbPath);
+  return join(dirname(resolvedDb), "embedding_cache.db");
+}
 
 const DEFAULT_CONFIG: HakoConfig = {
   search: {

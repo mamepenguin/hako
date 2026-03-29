@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { resolveDbPath, resolveCachePath } from "./config.js";
 import {
   getConnection,
   deleteEntry,
@@ -26,15 +27,17 @@ export interface HakoOptions {
 
 export class Hako {
   private readonly db: Database.Database;
-  private readonly dbPath: string | undefined;
+  private readonly resolvedDbPath: string;
+  private readonly cachePath: string;
 
   constructor(options?: HakoOptions) {
-    this.dbPath = options?.dbPath;
-    this.db = getConnection(this.dbPath);
+    this.resolvedDbPath = resolveDbPath(options?.dbPath);
+    this.cachePath = resolveCachePath(options?.dbPath);
+    this.db = getConnection(this.resolvedDbPath);
   }
 
   async save(input: SaveInput): Promise<SaveOutput> {
-    return saveEntry(this.db, input);
+    return saveEntry(this.db, input, { cachePath: this.cachePath });
   }
 
   async search(
@@ -61,7 +64,7 @@ export class Hako {
   }
 
   stats(): Stats {
-    return getStats(this.db, this.dbPath);
+    return getStats(this.db, this.resolvedDbPath);
   }
 
   close(): void {
