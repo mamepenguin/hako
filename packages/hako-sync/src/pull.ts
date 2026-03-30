@@ -3,7 +3,7 @@ import type { Scope, Priority } from "hako-db";
 import { loadState, saveState } from "./state.js";
 import { readOps, readEpoch, listMachines } from "./oplog.js";
 import { gitPull } from "./git.js";
-import type { SyncConfig, OpAdd, PullResult } from "./types.js";
+import type { SyncConfig, OpAdd, OpUpdate, PullResult } from "./types.js";
 
 const VALID_SCOPES = new Set<string>(["default", "global"]);
 const VALID_PRIORITIES = new Set<string>(["normal", "high"]);
@@ -14,6 +14,25 @@ function validateScope(s: string): Scope {
 
 function validatePriority(p: string): Priority {
   return VALID_PRIORITIES.has(p) ? (p as Priority) : "normal";
+}
+
+async function importEntry(
+  hako: Hako,
+  op: OpAdd | OpUpdate,
+): Promise<"created" | "skipped"> {
+  const result = await hako.save({
+    id: op.id,
+    title: op.entry.title,
+    content: op.entry.content,
+    source: op.entry.source,
+    url: op.entry.url,
+    namespace: op.entry.namespace,
+    scope: validateScope(op.entry.scope),
+    priority: validatePriority(op.entry.priority),
+    happened_at: op.entry.happened_at,
+    tags: op.entry.tags,
+  });
+  return result.status === "created" ? "created" : "skipped";
 }
 
 export async function pull(
@@ -36,14 +55,16 @@ export async function pull(
 
   // Collect all ops from other machines
   const deleteIds = new Set<string>();
-  const addOps: OpAdd[] = [];
+  const addOps: Array<{ op: OpAdd; compacted: boolean }> = [];
+  const updateOps: OpUpdate[] = [];
 
   for (const machine of machines) {
     const savedOffset = state.offsets[machine] ?? 0;
     const savedEpoch = state.epochs[machine] ?? 0;
     const currentEpoch = readEpoch(config.repo, machine);
     // Detect compaction: epoch changed → read from beginning
-    const offset = currentEpoch !== savedEpoch ? 0 : savedOffset;
+    const isCompacted = currentEpoch !== savedEpoch;
+    const offset = isCompacted ? 0 : savedOffset;
     const { ops, newOffset } = readOps(config.repo, machine, offset);
     newEpochs[machine] = currentEpoch;
     newOffsets[machine] = newOffset;
@@ -51,8 +72,10 @@ export async function pull(
     for (const op of ops) {
       if (op.op === "delete") {
         deleteIds.add(op.id);
+      } else if (op.op === "update") {
+        updateOps.push(op);
       } else {
-        addOps.push(op);
+        addOps.push({ op, compacted: isCompacted });
       }
     }
   }
@@ -64,7 +87,6 @@ export async function pull(
     }
   }
 
-  // Apply adds
   const ageCutoff =
     config.import_max_age_days > 0
       ? new Date(
@@ -72,7 +94,8 @@ export async function pull(
         ).toISOString()
       : null;
 
-  for (const op of addOps) {
+  // Apply adds
+  for (const { op, compacted } of addOps) {
     // Skip if deleted by any machine
     if (deleteIds.has(op.id)) {
       skipped++;
@@ -86,20 +109,33 @@ export async function pull(
     }
 
     try {
-      const result = await hako.save({
-        id: op.id,
-        title: op.entry.title,
-        content: op.entry.content,
-        source: op.entry.source,
-        url: op.entry.url,
-        namespace: op.entry.namespace,
-        scope: validateScope(op.entry.scope),
-        priority: validatePriority(op.entry.priority),
-        happened_at: op.entry.happened_at,
-        tags: op.entry.tags,
-      });
+      // After compaction (epoch change), treat add as upsert
+      if (compacted) {
+        hako.delete(op.id); // remove if exists, ignore if not
+      }
 
-      if (result.status === "created") {
+      const status = await importEntry(hako, op);
+      if (status === "created") {
+        added++;
+      } else {
+        skipped++;
+      }
+    } catch {
+      skipped++;
+    }
+  }
+
+  // Apply updates (op:update bypasses deleteIds — update wins over delete)
+  for (const op of updateOps) {
+    if (ageCutoff && op.entry.happened_at < ageCutoff) {
+      skipped++;
+      continue;
+    }
+
+    try {
+      hako.delete(op.id); // remove existing to avoid ID-based dedup skip
+      const status = await importEntry(hako, op);
+      if (status === "created") {
         added++;
       } else {
         skipped++;
@@ -115,6 +151,7 @@ export async function pull(
     {
       ...state,
       last_push_ids: hako.allIds(),
+      last_push_at: state.last_push_at,
       offsets: newOffsets,
       epochs: newEpochs,
     },

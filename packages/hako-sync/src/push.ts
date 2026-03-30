@@ -2,27 +2,30 @@ import type { Hako } from "hako-db";
 import { loadState, saveState } from "./state.js";
 import { appendOps, countOps, writeOps } from "./oplog.js";
 import { gitAddCommitPush } from "./git.js";
-import type { SyncConfig, Op, OpAdd, PushResult } from "./types.js";
+import type { SyncConfig, Op, OpAdd, OpUpdate, PushResult } from "./types.js";
 import type { Entry } from "hako-db";
 
-function entryToAddOp(entry: Entry, ts: string): OpAdd {
+function entryToSyncEntry(entry: Entry) {
   return {
-    op: "add",
-    id: entry.id,
-    ts,
-    entry: {
-      source: entry.source,
-      title: entry.title,
-      content: entry.content,
-      url: entry.url,
-      namespace: entry.namespace,
-      scope: entry.scope,
-      priority: entry.priority,
-      happened_at: entry.happened_at,
-      created_at: entry.created_at,
-      tags: entry.tags,
-    },
+    source: entry.source,
+    title: entry.title,
+    content: entry.content,
+    url: entry.url,
+    namespace: entry.namespace,
+    scope: entry.scope,
+    priority: entry.priority,
+    happened_at: entry.happened_at,
+    created_at: entry.created_at,
+    tags: entry.tags,
   };
+}
+
+function entryToAddOp(entry: Entry, ts: string): OpAdd {
+  return { op: "add", id: entry.id, ts, entry: entryToSyncEntry(entry) };
+}
+
+function entryToUpdateOp(entry: Entry, ts: string): OpUpdate {
+  return { op: "update", id: entry.id, ts, entry: entryToSyncEntry(entry) };
 }
 
 export async function push(
@@ -51,8 +54,21 @@ export async function push(
     ops.push({ op: "delete", id, ts });
   }
 
+  // Detect updated entries (content changed since last push)
+  let updatedCount = 0;
+  if (state.last_push_at !== null) {
+    const updatedEntries = hako.getUpdatedSince(state.last_push_at);
+    for (const entry of updatedEntries) {
+      // Only include entries that existed before (not new adds)
+      if (lastPushIds.has(entry.id) && currentIds.has(entry.id)) {
+        ops.push(entryToUpdateOp(entry, ts));
+        updatedCount++;
+      }
+    }
+  }
+
   if (ops.length === 0) {
-    return { added: 0, deleted: 0, committed: false, compacted: false };
+    return { added: 0, deleted: 0, updated: 0, committed: false, compacted: false };
   }
 
   appendOps(config.repo, config.machine_id, ops);
@@ -69,7 +85,7 @@ export async function push(
 
   const commitMsg = compacted
     ? `sync: ${config.machine_id} compacted (${[...currentIds].length} entries)`
-    : `sync: ${config.machine_id} +${newIds.length} -${deletedIds.length}`;
+    : `sync: ${config.machine_id} +${newIds.length} -${deletedIds.length} ~${updatedCount}`;
 
   const committed = await gitAddCommitPush(config.repo, commitMsg);
 
@@ -77,9 +93,10 @@ export async function push(
     {
       ...state,
       last_push_ids: [...currentIds],
+      last_push_at: ts,
     },
     dbPath,
   );
 
-  return { added: newIds.length, deleted: deletedIds.length, committed, compacted };
+  return { added: newIds.length, deleted: deletedIds.length, updated: updatedCount, committed, compacted };
 }

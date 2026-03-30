@@ -9,6 +9,7 @@ export type {
   Op,
   OpAdd,
   OpDelete,
+  OpUpdate,
   SyncState,
   PushResult,
   PullResult,

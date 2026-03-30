@@ -34,7 +34,6 @@ export function status(
     unpushed_adds: unpushedAdds,
     unpushed_deletes: unpushedDeletes,
     unread_machines: unreadMachines,
-    last_push_at:
-      state.last_push_ids.length > 0 ? new Date().toISOString() : null,
+    last_push_at: state.last_push_at,
   };
 }

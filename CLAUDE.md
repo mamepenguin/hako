@@ -7,9 +7,9 @@ Japanese text optimized. SQLite single-file DB.
 
 ```bash
 pnpm install                    # Install dependencies
-pnpm --filter hako-db test      # Run library tests (69 tests)
+pnpm --filter hako-db test      # Run library tests (84 tests)
 pnpm --filter hako-mcp test     # Run MCP server tests (7 tests)
-pnpm --filter hako-sync test    # Run sync tests (20 tests)
+pnpm --filter hako-sync test    # Run sync tests (24 tests)
 pnpm --filter hako-db build     # Build library
 pnpm --filter hako-cli build    # Build CLI
 pnpm --filter hako-mcp build    # Build MCP server
@@ -21,7 +21,7 @@ pnpm --filter hako-sync build   # Build sync package
 Monorepo with 4 packages:
 
 - **packages/hako-db** — Library. `import { Hako } from 'hako-db'` for use from other Node.js backends.
-- **packages/hako-cli** — CLI. `hako add`, `hako search`, `hako web <url>`, `hako sync push/pull`, etc.
+- **packages/hako-cli** — CLI. `hako add`, `hako search`, `hako update`, `hako export`, `hako web <url>`, `hako sync push/pull`, etc.
 - **packages/hako-mcp** — MCP server. `hako-mcp serve` for Claude Code integration, `hako-mcp save-transcript` for session capture.
 - **packages/hako-sync** — Multi-machine sync via Git + JSONL oplog.
 
@@ -31,7 +31,7 @@ Dependency direction: hako-cli → hako-sync → hako-db, hako-mcp → hako-db (
 
 | File | Responsibility |
 |------|---------------|
-| `index.ts` | `Hako` class — public API wrapping all modules |
+| `index.ts` | `Hako` class — public API: save, search, update, exportEntries, getUpdatedSince, etc. |
 | `types.ts` | All TypeScript interfaces (`Entry`, `SearchResult`, `SaveInput`, etc.) |
 | `config.ts` | Config resolution per-DB (`resolveConfigPath`, `resolveDbPath`, `resolveCachePath`), merges with defaults |
 | `db.ts` | SQLite schema (entries + FTS5 trigram + vec0), CRUD operations, Nano ID migration |
@@ -92,6 +92,8 @@ FTS5 and vec0 are kept in sync via SQLite triggers (INSERT/UPDATE/DELETE).
 - FTS5 triggers use `new.rowid` / `old.rowid`, not `new.id` / `old.id`
 - `SaveInput.id` is optional: if provided (e.g. sync import), that ID is used; if already exists, entry is skipped
 - Existing INTEGER-id databases are auto-migrated to Nano ID on first open
+- `Hako.update()` is a partial update: only specified fields change, `undefined` = no change, `null` = clear nullable fields (`content`, `url`)
+- `updateEntry` wraps read + update in a SQLite transaction; re-embeds only when title or content changes
 - Embedding tests mock `@huggingface/transformers` to avoid model download
 - `vi.mock` factory functions cannot reference top-level variables (use local `const` inside factory)
 - better-sqlite3 native module must be built (`node-gyp rebuild` if bindings not found)
@@ -119,17 +121,18 @@ Oplog-based sync via Git repository. Each machine appends operations to its own 
 
 ### Sync Model
 
-- **Oplog format**: `{"op":"add","id":"...","ts":"...","entry":{...}}` and `{"op":"delete","id":"...","ts":"..."}`
+- **Oplog format**: `{"op":"add","id":"...","ts":"...","entry":{...}}`, `{"op":"delete","id":"...","ts":"..."}`, and `{"op":"update","id":"...","ts":"...","entry":{...}}`
 - **Per-machine files**: `<repo>/<machine_id>/ops.jsonl` (append-only, compacted periodically)
 - **Compaction epoch**: `<repo>/<machine_id>/ops.epoch` (counter incremented on each compaction)
-- **delete-wins**: If any machine has a delete for an ID, that entry is deleted everywhere
+- **delete-wins** (for `op:add`): If any machine has a delete for an ID, that entry is deleted everywhere
+- **update-wins** (for `op:update`): `op:update` unconditionally wins over `op:delete` — if any machine updates an entry, it survives
 - **Embedding excluded**: Not in JSONL. Recomputed locally via embedding cache
 
 ### Sync Flow
 
 ```
-push: diff current DB IDs vs last_push_ids → op:add/op:delete → auto-compact if threshold exceeded → git commit & push
-pull: git pull → check epoch per machine (reset offset if compacted) → read ops from offset → apply deletes → import adds (with age filter)
+push: diff current DB IDs vs last_push_ids → op:add/op:delete + detect updated_at > last_push_at → op:update → auto-compact if threshold exceeded → git commit & push
+pull: git pull → check epoch per machine (reset offset if compacted → upsert mode for op:add) → read ops from offset → apply deletes → import adds → apply updates (with age filter)
 ```
 
 ### Auto-Compaction
@@ -175,7 +178,7 @@ hako sync status                 # Show sync status
 
 ## MCP Server (hako-mcp)
 
-Tools: `save`, `search`, `delete`, `prune`, `stats`, `list_namespaces`
+Tools: `save`, `search`, `update`, `delete`, `prune`, `stats`, `list_namespaces`
 
 CLI: `hako-mcp serve` (stdio MCP), `hako-mcp save-transcript` (JSONL → Q&A chunks)
 

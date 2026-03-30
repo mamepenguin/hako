@@ -18,6 +18,7 @@ export function loadState(
     return {
       machine_id: machineId,
       last_push_ids: [],
+      last_push_at: null,
       offsets: {},
       epochs: {},
     };
@@ -29,6 +30,7 @@ export function loadState(
   return {
     machine_id: machineId,
     last_push_ids: data.last_push_ids ?? [],
+    last_push_at: data.last_push_at ?? null,
     offsets: data.offsets ?? {},
     epochs: data.epochs ?? {},
   };

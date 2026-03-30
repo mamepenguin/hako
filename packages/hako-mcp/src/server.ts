@@ -5,7 +5,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { Hako } from "hako-db";
-import type { Scope, Priority, ScopeMode } from "hako-db";
+import type { Scope, Priority, ScopeMode, UpdateInput } from "hako-db";
 import { getProject, resolveGitRoot } from "./project.js";
 
 let hako: Hako | null = null;
@@ -120,6 +120,28 @@ Use this for periodic cleanup of stale entries.`,
       properties: {},
     },
   },
+  {
+    name: "update",
+    description: `Update an existing entry by ID. Only specified fields are updated.
+
+Omitted fields remain unchanged. Setting content or url to null clears the field.
+If title or content changes, the embedding is automatically recomputed.`,
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string", description: "The ID of the entry to update" },
+        title: { type: "string", description: "New title" },
+        content: { type: ["string", "null"] as const, description: "New content (null to clear)" },
+        tags: { type: "string", description: "New comma-separated tags" },
+        url: { type: ["string", "null"] as const, description: "New URL (null to clear)" },
+        scope: { type: "string", enum: ["default", "global"], description: "New visibility scope" },
+        priority: { type: "string", enum: ["normal", "high"], description: "New priority" },
+        namespace: { type: "string", description: "New namespace" },
+        source: { type: "string", description: "New source identifier" },
+      },
+      required: ["id"],
+    },
+  },
 ];
 
 function requireString(args: Record<string, unknown>, key: string): string {
@@ -182,6 +204,21 @@ async function handleToolCall(
 
     case "list_namespaces":
       return { namespaces: h.namespaces() };
+
+    case "update": {
+      const id = requireString(args, "id");
+      const fields: Record<string, unknown> = {};
+      for (const key of ["title", "content", "tags", "url", "scope", "priority", "namespace", "source"]) {
+        if (args[key] !== undefined) {
+          fields[key] = args[key];
+        }
+      }
+      if (Object.keys(fields).length === 0) {
+        throw new Error("At least one field besides id must be specified");
+      }
+      const result = await h.update(id, fields as UpdateInput);
+      return { status: result.status, id: result.id };
+    }
 
     default:
       throw new Error(`Unknown tool: ${name}`);

@@ -265,13 +265,15 @@ describe("compaction", () => {
 
     // B pulls after compaction — offset reset reads snapshot from 0
     const pull2 = await pull(hakoB, configB, dbPathB);
-    // Snapshot only contains add ops for current entries (3 remaining on A).
-    // B already has entries 0,1,2 from pull1; entries 3,4 are new.
-    // Delete ops are lost in compaction — B keeps entries 0,1 until B prunes.
-    expect(pull2.added).toBe(2);
+    // Compaction snapshot has 3 entries (A's current: entry 2,3,4).
+    // After epoch change, op:add is treated as upsert (delete + save).
+    // entry 2: B has it → upsert (delete + save) → added +1
+    // entries 3,4: B doesn't have them → added +2
+    // entries 0,1: not in snapshot, still on B (delete ops lost in compaction)
+    expect(pull2.added).toBe(3);
     expect(pull2.deleted).toBe(0);
 
-    // B has 5 (3 original + 2 new). Entries 0,1 still on B (prune handles cleanup).
+    // B has 5 (entries 0,1 from before + entries 2,3,4 upserted/added).
     expect(hakoB.list({ limit: 20 })).toHaveLength(5);
   });
 
@@ -289,5 +291,91 @@ describe("compaction", () => {
     expect(pullResult.skipped).toBe(1);
     expect(pullResult.added).toBe(0);
     expect(hakoB.list({ limit: 10 })).toHaveLength(0);
+  });
+});
+
+describe("op:update", () => {
+  it("push detects updated entry", async () => {
+    // A saves and pushes
+    const saved = await hakoA.save({ title: "Original", source: "test" });
+    await push(hakoA, configA, dbPathA);
+
+    // A updates and pushes again
+    await hakoA.update(saved.id, { title: "Updated" });
+    const pushResult = await push(hakoA, configA, dbPathA);
+
+    expect(pushResult.updated).toBe(1);
+    expect(pushResult.added).toBe(0);
+    expect(pushResult.committed).toBe(true);
+  });
+
+  it("pull applies op:update", async () => {
+    // A saves and pushes, B pulls
+    const saved = await hakoA.save({ title: "Original", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+
+    // Verify B has the entry
+    const beforeUpdate = hakoB.get(saved.id);
+    expect(beforeUpdate?.title).toBe("Original");
+
+    // A updates and pushes
+    await hakoA.update(saved.id, { title: "Updated" });
+    await push(hakoA, configA, dbPathA);
+
+    // B pulls — should get the update
+    const pullResult = await pull(hakoB, configB, dbPathB);
+    expect(pullResult.added).toBe(1); // upsert: delete + save = added
+
+    const afterUpdate = hakoB.get(saved.id);
+    expect(afterUpdate?.title).toBe("Updated");
+  });
+
+  it("op:update wins over op:delete", async () => {
+    // A saves and pushes, B pulls
+    const saved = await hakoA.save({ title: "Original", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+
+    // B deletes and pushes
+    hakoB.delete(saved.id);
+    await push(hakoB, configB, dbPathB);
+
+    // A updates and pushes
+    await hakoA.update(saved.id, { title: "Updated by A" });
+    await push(hakoA, configA, dbPathA);
+
+    // A pulls B's delete — but A's own update should have already been pushed
+    // The key test: when another machine pulls and sees both delete and update
+    // Create a third machine to observe
+    const dbPathC = join(tempDir, "machine-c", "hako.db");
+    mkdirSync(join(tempDir, "machine-c"), { recursive: true });
+    const hakoC = new Hako({ dbPath: dbPathC });
+    const configC: SyncConfig = {
+      repo: syncRepo,
+      machine_id: "machine-c",
+      import_max_age_days: 90,
+      compaction_threshold: 2000,
+    };
+
+    try {
+      // C pulls everything — sees delete from B and update from A
+      const pullResult = await pull(hakoC, configC, dbPathC);
+      // op:update wins — entry should exist on C
+      const entry = hakoC.get(saved.id);
+      expect(entry).not.toBeNull();
+      expect(entry?.title).toBe("Updated by A");
+    } finally {
+      hakoC.close();
+    }
+  });
+
+  it("first push with null last_push_at skips update detection", async () => {
+    // A saves and pushes for the first time
+    await hakoA.save({ title: "First", source: "test" });
+    const pushResult = await push(hakoA, configA, dbPathA);
+
+    expect(pushResult.updated).toBe(0);
+    expect(pushResult.added).toBe(1);
   });
 });

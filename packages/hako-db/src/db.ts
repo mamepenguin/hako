@@ -10,7 +10,7 @@ import {
   serializeVec,
 } from "./embeddings.js";
 import { storeBatch as cacheStoreBatch } from "./embedding-cache.js";
-import type { Entry, NamespaceCount, SourceCount, Stats } from "./types.js";
+import type { Entry, ExportOptions, NamespaceCount, SourceCount, Stats, UpdateInput, UpdateOutput } from "./types.js";
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS entries (
@@ -563,4 +563,140 @@ export function getEntriesByIds(
     results.push(...rows);
   }
   return results;
+}
+
+export function exportEntries(
+  db: Database.Database,
+  opts?: ExportOptions,
+): Entry[] {
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+
+  if (opts?.source) {
+    conditions.push("source = ?");
+    params.push(opts.source);
+  }
+  if (opts?.namespace) {
+    conditions.push("namespace = ?");
+    params.push(opts.namespace);
+  }
+  if (opts?.since) {
+    conditions.push("happened_at >= ?");
+    params.push(opts.since);
+  }
+  if (opts?.until) {
+    conditions.push("happened_at <= ?");
+    params.push(opts.until);
+  }
+
+  const where =
+    conditions.length > 0 ? "WHERE " + conditions.join(" AND ") : "";
+
+  return db
+    .prepare(`SELECT * FROM entries ${where} ORDER BY happened_at DESC`)
+    .all(...params) as Entry[];
+}
+
+export async function updateEntry(
+  db: Database.Database,
+  id: string,
+  fields: UpdateInput,
+  cachePath: string,
+): Promise<UpdateOutput> {
+  const hasFields = Object.values(fields).some((v) => v !== undefined);
+  if (!hasFields) {
+    throw new Error("At least one field must be specified for update");
+  }
+
+  const existing = db
+    .prepare("SELECT * FROM entries WHERE id = ?")
+    .get(id) as Entry | undefined;
+
+  if (!existing) {
+    return { id, status: "not_found" };
+  }
+
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (fields.title !== undefined) {
+    sets.push("title = ?");
+    params.push(fields.title);
+  }
+  if (fields.content !== undefined) {
+    sets.push("content = ?");
+    params.push(fields.content);
+  }
+  if (fields.tags !== undefined) {
+    sets.push("tags = ?");
+    params.push(fields.tags);
+  }
+  if (fields.url !== undefined) {
+    sets.push("url = ?");
+    params.push(fields.url);
+  }
+  if (fields.scope !== undefined) {
+    sets.push("scope = ?");
+    params.push(fields.scope);
+  }
+  if (fields.priority !== undefined) {
+    sets.push("priority = ?");
+    params.push(fields.priority);
+  }
+  if (fields.namespace !== undefined) {
+    sets.push("namespace = ?");
+    params.push(fields.namespace);
+  }
+  if (fields.source !== undefined) {
+    sets.push("source = ?");
+    params.push(fields.source);
+  }
+
+  sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')");
+
+  const titleChanged = fields.title !== undefined && fields.title !== existing.title;
+  const contentChanged = fields.content !== undefined && fields.content !== existing.content;
+  const needsReembed = titleChanged || contentChanged;
+
+  let serialized: Float32Array | null = null;
+  if (needsReembed) {
+    const newTitle = fields.title ?? existing.title;
+    const newContent = fields.content !== undefined ? fields.content : existing.content;
+    const embeddingInput = makeEmbeddingInput(newTitle, newContent);
+    const vec = await embed(embeddingInput);
+    cacheStoreBatch([[embeddingInput, vec]], cachePath);
+    serialized = serializeVec(vec);
+  }
+
+  const doUpdate = db.transaction(() => {
+    try {
+      db.prepare(
+        `UPDATE entries SET ${sets.join(", ")} WHERE id = ?`,
+      ).run(...params, id);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("UNIQUE constraint")) {
+        throw new Error(`URL already exists: ${fields.url}`);
+      }
+      throw error;
+    }
+
+    if (needsReembed && serialized) {
+      db.prepare(
+        "UPDATE entries_vec SET embedding = ? WHERE entry_id = ?",
+      ).run(serialized, id);
+    }
+  });
+
+  doUpdate();
+
+  return { id, status: "updated" };
+}
+
+export function getUpdatedSince(
+  db: Database.Database,
+  since: string,
+): Entry[] {
+  return db
+    .prepare("SELECT * FROM entries WHERE updated_at > ?")
+    .all(since) as Entry[];
 }

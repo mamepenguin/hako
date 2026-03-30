@@ -1,6 +1,7 @@
+import { writeFileSync } from "node:fs";
 import { Command } from "commander";
 import { Hako, fetchPage } from "hako-db";
-import type { Entry, SearchResult } from "hako-db";
+import type { Entry, SearchResult, Scope, Priority } from "hako-db";
 import { push, pull, status, init, loadSyncConfig } from "hako-sync";
 
 const program = new Command();
@@ -226,6 +227,85 @@ program
     }
   });
 
+program
+  .command("export")
+  .description("Export entries as JSONL")
+  .option("--source <source>", "Filter by source")
+  .option("--namespace <namespace>", "Filter by namespace")
+  .option("--since <date>", "From date (ISO 8601)")
+  .option("--until <date>", "To date (ISO 8601)")
+  .option("--output <file>", "Output file path (default: stdout)")
+  .action((opts) => {
+    const hako = new Hako({ dbPath: getDbPath() });
+    try {
+      const entries = hako.exportEntries({
+        source: opts.source,
+        namespace: opts.namespace,
+        since: opts.since,
+        until: opts.until,
+      });
+
+      const lines = entries.map((e) => JSON.stringify(e)).join("\n");
+      const output = entries.length > 0 ? lines + "\n" : "";
+
+      if (opts.output) {
+        writeFileSync(opts.output, output, "utf-8");
+        console.error(`Exported ${entries.length} entries to ${opts.output}`);
+      } else {
+        if (output) process.stdout.write(output);
+      }
+    } finally {
+      hako.close();
+    }
+  });
+
+program
+  .command("update <id>")
+  .description("Update an existing entry")
+  .option("--title <title>", "New title")
+  .option("--content <content>", "New content")
+  .option("--tags <tags>", "New comma-separated tags")
+  .option("--url <url>", "New URL")
+  .option("--scope <scope>", "New scope (default|global)")
+  .option("--priority <priority>", "New priority (normal|high)")
+  .option("--namespace <namespace>", "New namespace")
+  .option("--source <source>", "New source")
+  .action(async (id: string, opts) => {
+    const fields: Record<string, unknown> = {};
+    if (opts.title !== undefined) fields.title = opts.title;
+    if (opts.content !== undefined) fields.content = opts.content;
+    if (opts.tags !== undefined) fields.tags = opts.tags;
+    if (opts.url !== undefined) fields.url = opts.url;
+    if (opts.scope !== undefined) fields.scope = opts.scope as Scope;
+    if (opts.priority !== undefined) fields.priority = opts.priority as Priority;
+    if (opts.namespace !== undefined) fields.namespace = opts.namespace;
+    if (opts.source !== undefined) fields.source = opts.source;
+
+    if (Object.keys(fields).length === 0) {
+      console.error("Error: at least one field must be specified.");
+      process.exit(1);
+    }
+
+    const hako = new Hako({ dbPath: getDbPath() });
+    try {
+      const result = await hako.update(id, fields);
+      if (result.status === "not_found") {
+        console.error(`Entry ${id} not found.`);
+        process.exit(1);
+      }
+      const entry = hako.get(id);
+      if (entry) {
+        console.log("Updated:");
+        printEntryDetail(entry);
+      }
+    } catch (err) {
+      console.error(`Error: ${(err as Error).message}`);
+      process.exit(1);
+    } finally {
+      hako.close();
+    }
+  });
+
 // --- Sync subcommands ---
 
 const syncCmd = program
@@ -271,9 +351,11 @@ syncCmd
       if (!result.committed) {
         console.log("Nothing to push.");
       } else {
-        console.log(
-          `Pushed: +${result.added} added, -${result.deleted} deleted.`,
-        );
+        const parts = [`+${result.added} added`, `-${result.deleted} deleted`];
+        if (result.updated > 0) {
+          parts.push(`~${result.updated} updated`);
+        }
+        console.log(`Pushed: ${parts.join(", ")}.`);
       }
     } finally {
       hako.close();

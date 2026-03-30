@@ -23,7 +23,7 @@ function isValidOp(data: unknown): data is Op {
   const obj = data as Record<string, unknown>;
   if (typeof obj.id !== "string" || typeof obj.ts !== "string") return false;
   if (obj.op === "delete") return true;
-  if (obj.op === "add" && typeof obj.entry === "object" && obj.entry !== null) {
+  if ((obj.op === "add" || obj.op === "update") && typeof obj.entry === "object" && obj.entry !== null) {
     const e = obj.entry as Record<string, unknown>;
     return typeof e.title === "string" && typeof e.happened_at === "string";
   }

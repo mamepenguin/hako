@@ -31,11 +31,19 @@ export interface OpDelete {
   readonly ts: string;
 }
 
-export type Op = OpAdd | OpDelete;
+export interface OpUpdate {
+  readonly op: "update";
+  readonly id: string;
+  readonly ts: string;
+  readonly entry: SyncEntry;
+}
+
+export type Op = OpAdd | OpDelete | OpUpdate;
 
 export interface SyncState {
   readonly machine_id: string;
   readonly last_push_ids: readonly string[];
+  readonly last_push_at: string | null;
   readonly offsets: Readonly<Record<string, number>>;
   readonly epochs: Readonly<Record<string, number>>;
 }
@@ -43,6 +51,7 @@ export interface SyncState {
 export interface PushResult {
   readonly added: number;
   readonly deleted: number;
+  readonly updated: number;
   readonly committed: boolean;
   readonly compacted: boolean;
 }

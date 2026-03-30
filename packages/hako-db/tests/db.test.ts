@@ -10,6 +10,9 @@ import {
   listEntries,
   getStats,
   listSources,
+  exportEntries,
+  updateEntry,
+  getUpdatedSince,
 } from "../src/db.js";
 import type Database from "better-sqlite3";
 
@@ -260,6 +263,185 @@ describe("db", () => {
       const sources = listSources(db);
       expect(sources).toHaveLength(2);
       expect(sources.map((s) => s.source).sort()).toEqual(["memo", "web"]);
+    });
+  });
+
+  describe("exportEntries", () => {
+    beforeEach(async () => {
+      await insertEntry(db, {
+        title: "Web A",
+        source: "web",
+        url: "https://a.com",
+        namespace: "project-a",
+        happened_at: "2026-01-15T12:00:00",
+        cachePath: join(tempDir, "cache.db"),
+      });
+      await insertEntry(db, {
+        title: "Memo B",
+        source: "memo",
+        namespace: "project-b",
+        happened_at: "2026-03-15T12:00:00",
+        cachePath: join(tempDir, "cache.db"),
+      });
+      await insertEntry(db, {
+        title: "Web C",
+        source: "web",
+        url: "https://c.com",
+        namespace: "project-a",
+        happened_at: "2026-03-29T12:00:00",
+        cachePath: join(tempDir, "cache.db"),
+      });
+    });
+
+    it("exports all entries without filters", () => {
+      const entries = exportEntries(db);
+      expect(entries).toHaveLength(3);
+    });
+
+    it("filters by source", () => {
+      const entries = exportEntries(db, { source: "web" });
+      expect(entries).toHaveLength(2);
+      expect(entries.every((e) => e.source === "web")).toBe(true);
+    });
+
+    it("filters by namespace", () => {
+      const entries = exportEntries(db, { namespace: "project-a" });
+      expect(entries).toHaveLength(2);
+      expect(entries.every((e) => e.namespace === "project-a")).toBe(true);
+    });
+
+    it("filters by since/until", () => {
+      const entries = exportEntries(db, {
+        since: "2026-03-01",
+        until: "2026-03-20",
+      });
+      expect(entries).toHaveLength(1);
+      expect(entries[0].title).toBe("Memo B");
+    });
+
+    it("returns empty array when no matches", () => {
+      const entries = exportEntries(db, { source: "nonexistent" });
+      expect(entries).toHaveLength(0);
+    });
+  });
+
+  describe("updateEntry", () => {
+    let entryId: string;
+    const cachePath = "";
+
+    beforeEach(async () => {
+      const result = await insertEntry(db, {
+        title: "Original Title",
+        content: "Original content",
+        source: "test",
+        tags: "tag1,tag2",
+        namespace: "test-ns",
+        scope: "default",
+        priority: "normal",
+        happened_at: "2026-03-29T12:00:00",
+        cachePath: join(tempDir, "cache.db"),
+      });
+      entryId = result.id;
+      cachePath;
+    });
+
+    it("updates only specified fields", async () => {
+      const result = await updateEntry(db, entryId, { title: "New Title" }, join(tempDir, "cache.db"));
+      expect(result.status).toBe("updated");
+
+      const entry = db.prepare("SELECT * FROM entries WHERE id = ?").get(entryId) as Record<string, unknown>;
+      expect(entry.title).toBe("New Title");
+      expect(entry.content).toBe("Original content");
+      expect(entry.tags).toBe("tag1,tag2");
+    });
+
+    it("sets updated_at automatically", async () => {
+      await updateEntry(db, entryId, { tags: "newtag" }, join(tempDir, "cache.db"));
+
+      const entry = db.prepare("SELECT updated_at FROM entries WHERE id = ?").get(entryId) as { updated_at: string };
+      expect(entry.updated_at).not.toBeNull();
+    });
+
+    it("returns not_found for non-existent id", async () => {
+      const result = await updateEntry(db, "nonexistent", { title: "x" }, join(tempDir, "cache.db"));
+      expect(result.status).toBe("not_found");
+    });
+
+    it("clears nullable fields with null", async () => {
+      await updateEntry(db, entryId, { content: null }, join(tempDir, "cache.db"));
+
+      const entry = db.prepare("SELECT content FROM entries WHERE id = ?").get(entryId) as { content: string | null };
+      expect(entry.content).toBeNull();
+    });
+
+    it("re-embeds when title changes", async () => {
+      const { embed } = await import("../src/embeddings.js");
+      const embedMock = embed as ReturnType<typeof vi.fn>;
+      embedMock.mockClear();
+
+      await updateEntry(db, entryId, { title: "Changed Title" }, join(tempDir, "cache.db"));
+
+      expect(embedMock).toHaveBeenCalledOnce();
+    });
+
+    it("does not re-embed when only tags change", async () => {
+      const { embed } = await import("../src/embeddings.js");
+      const embedMock = embed as ReturnType<typeof vi.fn>;
+      embedMock.mockClear();
+
+      await updateEntry(db, entryId, { tags: "new-tags" }, join(tempDir, "cache.db"));
+
+      expect(embedMock).not.toHaveBeenCalled();
+    });
+
+    it("throws on URL uniqueness violation", async () => {
+      await insertEntry(db, {
+        title: "Other",
+        url: "https://taken.com",
+        source: "web",
+        happened_at: "2026-03-29T12:00:00",
+        cachePath: join(tempDir, "cache.db"),
+      });
+
+      await expect(
+        updateEntry(db, entryId, { url: "https://taken.com" }, join(tempDir, "cache.db")),
+      ).rejects.toThrow("URL already exists");
+    });
+
+    it("updates scope and priority", async () => {
+      await updateEntry(db, entryId, { scope: "global", priority: "high" }, join(tempDir, "cache.db"));
+
+      const entry = db.prepare("SELECT scope, priority FROM entries WHERE id = ?").get(entryId) as { scope: string; priority: string };
+      expect(entry.scope).toBe("global");
+      expect(entry.priority).toBe("high");
+    });
+  });
+
+  describe("getUpdatedSince", () => {
+    it("returns entries updated after the given timestamp", async () => {
+      const { id } = await insertEntry(db, {
+        title: "Entry",
+        happened_at: "2026-03-29T12:00:00",
+        cachePath: join(tempDir, "cache.db"),
+      });
+
+      // Manually set updated_at to a known value
+      db.prepare("UPDATE entries SET updated_at = '2026-03-29T15:00:00' WHERE id = ?").run(id);
+
+      const results = getUpdatedSince(db, "2026-03-29T14:00:00");
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe(id);
+    });
+
+    it("returns empty when none match", async () => {
+      await insertEntry(db, {
+        title: "Entry",
+        happened_at: "2026-03-29T12:00:00",
+        cachePath: join(tempDir, "cache.db"),
+      });
+
+      const results = getUpdatedSince(db, "2099-01-01T00:00:00");
+      expect(results).toHaveLength(0);
     });
   });
 });

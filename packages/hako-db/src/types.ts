@@ -93,6 +93,29 @@ export interface HakoConfig {
   readonly embedding: EmbeddingConfig;
 }
 
+export interface ExportOptions {
+  readonly source?: string;
+  readonly namespace?: string;
+  readonly since?: string;
+  readonly until?: string;
+}
+
+export interface UpdateInput {
+  readonly title?: string;
+  readonly content?: string | null;
+  readonly tags?: string;
+  readonly url?: string | null;
+  readonly scope?: Scope;
+  readonly priority?: Priority;
+  readonly namespace?: string;
+  readonly source?: string;
+}
+
+export interface UpdateOutput {
+  readonly id: string;
+  readonly status: "updated" | "not_found";
+}
+
 export interface PageInfo {
   readonly title: string;
   readonly content: string;

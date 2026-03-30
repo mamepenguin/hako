@@ -11,6 +11,9 @@ import {
   getStats,
   getAllEntryIds,
   getEntriesByIds,
+  exportEntries as dbExportEntries,
+  updateEntry,
+  getUpdatedSince as dbGetUpdatedSince,
 } from "./db.js";
 import { saveEntry } from "./save.js";
 import { hybridSearch } from "./search.js";
@@ -21,6 +24,9 @@ import type {
   SearchOptions,
   SearchResult,
   ListOptions,
+  ExportOptions,
+  UpdateInput,
+  UpdateOutput,
   SourceCount,
   NamespaceCount,
   Stats,
@@ -95,6 +101,18 @@ export class Hako {
     return getEntriesByIds(this.db, ids);
   }
 
+  exportEntries(options?: ExportOptions): Entry[] {
+    return dbExportEntries(this.db, options);
+  }
+
+  async update(id: string, fields: UpdateInput): Promise<UpdateOutput> {
+    return updateEntry(this.db, id, fields, this.cachePath);
+  }
+
+  getUpdatedSince(since: string): Entry[] {
+    return dbGetUpdatedSince(this.db, since);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -108,6 +126,9 @@ export type {
   SearchOptions,
   SearchResult,
   ListOptions,
+  ExportOptions,
+  UpdateInput,
+  UpdateOutput,
   SourceCount,
   NamespaceCount,
   Stats,
