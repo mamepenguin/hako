@@ -9,7 +9,7 @@ Japanese text optimized. SQLite single-file DB.
 pnpm install                    # Install dependencies
 pnpm --filter hako-db test      # Run library tests (69 tests)
 pnpm --filter hako-mcp test     # Run MCP server tests (7 tests)
-pnpm --filter hako-sync test    # Run sync tests (12 tests)
+pnpm --filter hako-sync test    # Run sync tests (20 tests)
 pnpm --filter hako-db build     # Build library
 pnpm --filter hako-cli build    # Build CLI
 pnpm --filter hako-mcp build    # Build MCP server
@@ -45,9 +45,9 @@ Dependency direction: hako-cli → hako-sync → hako-db, hako-mcp → hako-db (
 
 | File | Responsibility |
 |------|---------------|
-| `push.ts` | Diff detection (current IDs vs last push) → op:add/op:delete → Git commit & push |
-| `pull.ts` | Git pull → read other machines' oplog → delete-wins → age filter → import |
-| `oplog.ts` | JSONL oplog read/write, machine listing, input validation |
+| `push.ts` | Diff detection (current IDs vs last push) → op:add/op:delete → auto-compaction → Git commit & push |
+| `pull.ts` | Git pull → read other machines' oplog (epoch-based compaction detection) → delete-wins → age filter → import |
+| `oplog.ts` | JSONL oplog read/write/rewrite, machine listing, epoch tracking, input validation |
 | `git.ts` | Git operations (pull, add/commit/push, init) via `child_process.execFile` |
 | `state.ts` | Sync state management (`sync-state.json` — outside Git repo) |
 | `config.ts` | Reads `[sync]` section from config.toml |
@@ -120,16 +120,25 @@ Oplog-based sync via Git repository. Each machine appends operations to its own 
 ### Sync Model
 
 - **Oplog format**: `{"op":"add","id":"...","ts":"...","entry":{...}}` and `{"op":"delete","id":"...","ts":"..."}`
-- **Per-machine files**: `<repo>/<machine_id>/ops.jsonl` (append-only)
+- **Per-machine files**: `<repo>/<machine_id>/ops.jsonl` (append-only, compacted periodically)
+- **Compaction epoch**: `<repo>/<machine_id>/ops.epoch` (counter incremented on each compaction)
 - **delete-wins**: If any machine has a delete for an ID, that entry is deleted everywhere
 - **Embedding excluded**: Not in JSONL. Recomputed locally via embedding cache
 
 ### Sync Flow
 
 ```
-push: diff current DB IDs vs last_push_ids → op:add/op:delete → git commit & push
-pull: git pull → read other machines' ops from offset → apply deletes → import adds (with age filter)
+push: diff current DB IDs vs last_push_ids → op:add/op:delete → auto-compact if threshold exceeded → git commit & push
+pull: git pull → check epoch per machine (reset offset if compacted) → read ops from offset → apply deletes → import adds (with age filter)
 ```
+
+### Auto-Compaction
+
+- **Trigger**: push 後に自マシンの ops.jsonl が `compaction_threshold`（デフォルト 2000 ops）を超えたら自動発火
+- **動作**: 現在のDB全エントリを op:add として ops.jsonl を書き直し（atomic write via tmp+rename）、`ops.epoch` をインクリメント
+- **pull 側検知**: 保存済み epoch と現在の epoch を比較。不一致なら offset=0 から再読み込み（既存IDはskipで冪等）
+- **制約**: compaction で delete ops は失われる。各マシンが独立して prune する運用が前提
+- **効果**: prune で削除が発生した後に compaction すると、add+delete ペアが消えてファイルサイズが大幅に縮小
 
 ### Prune Compatibility
 
@@ -145,6 +154,7 @@ pull: git pull → read other machines' ops from offset → apply deletes → im
 repo = "~/.hako/sync"           # Git repo path (user does git clone)
 machine_id = "macbook"           # This machine's identifier
 import_max_age_days = 90         # Skip entries older than this on import
+compaction_threshold = 2000      # Auto-compact when ops exceed this count
 ```
 
 ### CLI
