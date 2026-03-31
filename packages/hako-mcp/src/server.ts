@@ -20,10 +20,12 @@ function getHako(): Hako {
 const TOOLS = [
   {
     name: "save",
-    description: `Save an important entry (highlight).
+    description: `Save an entry to long-term memory.
 
-Use this to persist key decisions, conclusions, design choices,
-or any information that should survive across sessions.
+Return status:
+- "created": new entry saved
+- "updated": existing similar entry updated (deduplicated)
+- "skipped": duplicate detected, no action taken. This is normal and expected (e.g. hooks may trigger saves that overlap). Do NOT treat as an error.
 
 Scope:
 - "default" (default): entries specific to the current namespace/project
@@ -31,8 +33,8 @@ Scope:
   Rule of thumb: if removing the project name still makes it useful, it's "global".
 
 Priority:
-- "high": explicitly saved important entries. Deduplication uses semantic similarity (cosine >= 0.90).
-- "normal": auto-captured entries. Deduplication uses exact content match.
+- "high" (default): explicitly saved entries. Deduplication uses semantic similarity (cosine >= 0.90).
+- "normal": auto-captured entries (e.g. transcripts). Deduplication uses exact content match.
 
 Tags: comma-separated categories (e.g. "auth,jwt", "architecture,db").`,
     inputSchema: {
@@ -44,7 +46,7 @@ Tags: comma-separated categories (e.g. "auth,jwt", "architecture,db").`,
         namespace: { type: "string", description: "Namespace/project path (defaults to git root of cwd)" },
         scope: { type: "string", enum: ["default", "global"], description: "Visibility scope", default: "default" },
         priority: { type: "string", enum: ["normal", "high"], description: "Entry priority", default: "high" },
-        source: { type: "string", description: "Data source identifier", default: "" },
+        happened_at: { type: "string", description: "When the event occurred (ISO 8601, e.g. '2025-03-15T10:00:00'). Defaults to now. Use for recording past events." },
       },
       required: ["title"],
     },
@@ -53,14 +55,19 @@ Tags: comma-separated categories (e.g. "auth,jwt", "architecture,db").`,
     name: "search",
     description: `Search entries using hybrid search (keyword + semantic).
 
-Query in natural language (e.g. "authentication strategy", "DB selection rationale").
-Try multiple related keywords if the first search is insufficient.
+Query tips:
+- Use short conceptual phrases for best results (e.g. "authentication strategy", "DB selection rationale")
+- The vector search excels at finding semantically related entries even with different wording
+- The FTS5 trigram search catches partial keyword matches in Japanese and English
+- Try multiple related queries if the first search is insufficient
 
 scope_mode controls which entries are searched:
 - "scoped_then_global" (default): this namespace's entries + global entries from other namespaces
 - "scoped": only this namespace's entries
 - "global_only": only global-scoped entries across all namespaces
-- "all": unrestricted cross-namespace search`,
+- "all": unrestricted cross-namespace search
+
+Each result contains: id, title, content, tags, namespace, scope, priority, source, score, created_at, updated_at, happened_at. Use score to gauge relevance (higher is better).`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -72,6 +79,7 @@ scope_mode controls which entries are searched:
           description: "Search scope mode",
           default: "scoped_then_global",
         },
+        source: { type: "string", description: "Filter by source (e.g. 'claude', 'web', 'transcript')" },
         limit: { type: "number", description: "Max results to return", default: 10 },
       },
       required: ["query"],
@@ -90,9 +98,10 @@ scope_mode controls which entries are searched:
   },
   {
     name: "prune",
-    description: `Delete entries not accessed within N days.
+    description: `Delete entries not accessed within N days. DESTRUCTIVE and IRREVERSIBLE.
 
-Use this for periodic cleanup of stale entries.`,
+NEVER run automatically or proactively. Only execute when the user explicitly requests cleanup.
+Before running, call stats first and inform the user how many entries may be affected.`,
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -169,7 +178,8 @@ async function handleToolCall(
         namespace: ns,
         scope: ((args.scope as string) ?? "default") as Scope,
         priority: ((args.priority as string) ?? "high") as Priority,
-        source: (args.source as string) ?? "",
+        source: "claude",
+        happened_at: (args.happened_at as string) ?? undefined,
       });
       return { status: result.status, id: result.id, namespace: ns, scope: args.scope ?? "default" };
     }
@@ -181,6 +191,7 @@ async function handleToolCall(
       const results = await h.search(query, {
         namespace: ns,
         scope_mode: scopeMode,
+        source: (args.source as string) ?? undefined,
         limit: (args.limit as number) ?? 10,
       });
       return { results, count: results.length };

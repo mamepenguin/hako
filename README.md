@@ -1,178 +1,20 @@
 # Hako
 
-Hybrid search data store for personal knowledge management. Combines SQLite FTS5 full-text search with vector similarity search (sqlite-vec) and Reciprocal Rank Fusion. Optimized for Japanese text.
+**[日本語版 README はこちら](README.ja.md)**
 
-Single-file SQLite database. No external servers required.
+Hako is a personal knowledge store with hybrid search (FTS5 full-text + vector similarity). Save design decisions, research notes, bookmarks, conversation highlights — anything worth recalling later — and find them instantly across projects.
 
-## Requirements
+  * As an **MCP server**, give AI assistants like Claude Code long-term memory
+  * As a **CLI tool**, integrate with other tools
+  * As a **Node.js library**, embed in your own tools
 
-- Node.js >= 20
-- pnpm
+Japanese-optimized. Single-file SQLite. All data stored locally when used standalone. No external servers.
 
-## Setup
+## Quick Start (MCP)
 
-```bash
-git clone <repo-url> && cd hako
-pnpm install
-pnpm build
-```
+Requires Node.js 20+.
 
-## Packages
-
-| Package | Description |
-|---------|-------------|
-| [hako-db](packages/hako-db) | Core library - embed in any Node.js backend |
-| [hako-cli](packages/hako-cli) | CLI tool |
-| [hako-mcp](packages/hako-mcp) | MCP server for Claude Code integration |
-| [hako-sync](packages/hako-sync) | Multi-machine sync via Git + JSONL oplog |
-
-## CLI Usage
-
-```bash
-# Add an entry
-hako add --title "Meeting notes" --content "Discussed Q3 roadmap" --source work --tags "meeting,roadmap"
-
-# Fetch and save a web page
-hako web https://example.com --tags "reference"
-
-# Hybrid search (FTS5 + vector)
-hako search "roadmap planning"
-hako search "roadmap" --source work --limit 5
-
-# List entries
-hako list --since 2025-01-01 --until 2025-03-31
-hako list --source web --limit 50
-
-# Show / delete (IDs are Nano ID strings)
-hako show V1StGXR8_Z5jdHi
-hako delete V1StGXR8_Z5jdHi
-
-# Stats
-hako stats
-hako sources
-
-# Use a different database
-hako --db ~/work/hako.db search "meeting"
-```
-
-## Library Usage
-
-```typescript
-import { Hako } from 'hako-db'
-
-// Default: ~/.hako/hako.db
-const hako = new Hako()
-
-// Custom database path
-const workHako = new Hako({ dbPath: '/path/to/work/hako.db' })
-
-// Save
-const { id, status } = await hako.save({
-  title: 'Design doc',
-  content: 'Architecture overview...',
-  source: 'notes',
-  tags: 'architecture,design',
-})
-
-// Save with specific ID (for sync import)
-await hako.save({
-  id: 'existing-nano-id',
-  title: 'Synced entry',
-  ...
-})
-
-// Hybrid search
-const results = await hako.search('architecture', { limit: 10 })
-
-// CRUD
-const entry = hako.get(id)           // string ID
-const entries = hako.list({ source: 'notes', limit: 20 })
-hako.delete(id)
-
-// Bulk read (for sync - does not update accessed_at)
-const allIds = hako.allIds()
-const entries = hako.getMany(['id1', 'id2', 'id3'])
-
-// Cleanup
-hako.close()
-```
-
-## Search Algorithm
-
-1. Query runs in parallel against FTS5 (trigram tokenizer) and vec0 (256-dim embedding), each returning top 50 candidates
-2. Reciprocal Rank Fusion merges results: `score = sum(1 / (k + rank + 1))`, k=60
-3. Time decay applied: `decay = 0.5 ^ (days_old / 180)`, floor=0.1
-4. Final score = RRF * decay, sorted descending
-
-Embedding model: [ruri-v3-30m-ONNX](https://huggingface.co/sirasagi62/ruri-v3-30m-ONNX) (256-dim, Japanese-optimized, runs locally via Transformers.js)
-
-## Multi-Machine Sync
-
-Sync hako data between multiple machines via a shared Git repository using append-only JSONL operation logs.
-
-### How It Works
-
-Each machine maintains its own `ops.jsonl` file in the sync repo. Operations are:
-- `op:add` — new entry created locally
-- `op:delete` — entry deleted/pruned locally
-
-Per-machine files mean **zero Git conflicts**. The `delete-wins` rule ensures pruned entries stay deleted across all machines.
-
-### Setup
-
-1. Create a private Git repo for sync:
-   ```bash
-   git init ~/.hako/sync
-   # Or clone an existing remote:
-   # git clone git@github.com:user/hako-sync.git ~/.hako/sync
-   ```
-
-2. Add sync config to `~/.hako/config.toml`:
-   ```toml
-   [sync]
-   repo = "~/.hako/sync"
-   machine_id = "macbook"
-   import_max_age_days = 90
-   ```
-
-3. Initialize:
-   ```bash
-   hako sync init
-   ```
-
-### Usage
-
-```bash
-hako sync push     # Export changes → Git commit & push
-hako sync pull     # Git pull → import remote changes
-hako sync status   # Show pending changes
-```
-
-### Prune Compatibility
-
-- Prune operates freely on the local DB (no sync constraints)
-- Pruned entries generate `op:delete` on next push, propagating to other machines
-- `import_max_age_days` prevents importing very old entries (set to match your prune threshold)
-
-### Sync Repo Structure
-
-```
-~/.hako/sync/               ← Git repo
-├── macbook/
-│   └── ops.jsonl           ← This machine's oplog (append-only)
-└── mac-mini/
-    └── ops.jsonl           ← Other machine's oplog
-```
-
-Sync state (`sync-state.json`) is stored locally alongside the DB, not in the Git repo.
-
-## MCP Server
-
-hako-mcp is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server that exposes hako as a tool for AI assistants like Claude Code. Runs over stdio.
-
-### Setup
-
-Add to your Claude Code config (`~/.claude.json` or project `.claude.json`):
+Add to your Claude Code settings (`~/.claude.json`):
 
 ```json
 {
@@ -185,20 +27,9 @@ Add to your Claude Code config (`~/.claude.json` or project `.claude.json`):
 }
 ```
 
-For local development builds:
+The database is created automatically at `~/.hako/hako.db` on first launch.
 
-```json
-{
-  "mcpServers": {
-    "hako": {
-      "command": "node",
-      "args": ["/path/to/packages/hako-mcp/dist/index.js", "serve"]
-    }
-  }
-}
-```
-
-To use a custom database path, add `--db` or set `HAKO_DB` via the `env` field:
+### Custom DB Path
 
 ```json
 {
@@ -214,20 +45,23 @@ To use a custom database path, add `--db` or set `HAKO_DB` via the `env` field:
 }
 ```
 
-### Available Tools
+## MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `save` | Save an entry with title, content, tags, namespace, scope, priority |
+| `save` | Save an entry (title, content, tags, namespace, scope, priority) |
 | `search` | Hybrid search (FTS5 + vector) with scope_mode filtering |
-| `delete` | Delete an entry by ID (string) |
-| `prune` | Delete entries not accessed within N days |
-| `stats` | Entry statistics, DB size, namespace breakdown |
+| `update` | Partial update of an existing entry by ID |
+| `delete` | Delete an entry by ID |
+| `prune` | Bulk-delete entries not accessed within N days |
+| `stats` | Entry counts, DB size, per-namespace breakdown |
 | `list_namespaces` | List all namespaces with counts and last update times |
 
-### Namespace Resolution
+## Core Concepts
 
-Namespace identifies which project an entry belongs to. Resolved automatically:
+### Namespace
+
+Identifies which project an entry belongs to. Resolved automatically in the following order:
 
 1. Explicit `namespace` parameter in tool call
 2. `HAKO_PROJECT` environment variable
@@ -235,113 +69,282 @@ Namespace identifies which project an entry belongs to. Resolved automatically:
 
 ### Scope and Priority
 
-**Scope** controls cross-project visibility:
+**Scope** — cross-project visibility:
 
-- `default` — project-specific entries
-- `global` — visible across all namespaces (e.g., general design principles)
+- `default` — searchable only within the owning namespace
+- `global` — searchable from all namespaces (e.g., general design principles)
 
-**Priority** affects deduplication and search ranking:
+**Priority** — affects deduplication and search ranking:
 
-- `high` — explicitly saved entries. Deduplicated by semantic similarity (cosine >= 0.90). Boosted x1.5 in search
+- `high` — explicitly saved entries. Deduplicated by semantic similarity (cosine >= 0.90). Search score x1.5
 - `normal` — auto-captured entries (e.g., transcripts). Deduplicated by exact content match
 
-**scope_mode** controls search behavior:
+**scope_mode** — search scope:
 
-- `scoped_then_global` (default) — this namespace + global entries from other namespaces
-- `scoped` — only this namespace
-- `global_only` — only global-scoped entries
+- `scoped_then_global` (default) — current namespace + global entries from other namespaces
+- `scoped` — current namespace only
+- `global_only` — global entries only
 - `all` — unrestricted cross-namespace search
 
-### Transcript Ingestion
+## Search Algorithm
 
-Save Claude Code session transcripts as searchable Q&A chunks:
+1. Parallel search with FTS5 (trigram tokenizer) and vec0 (256-dim embedding), ranking the top 50 from each
+2. Merged via Reciprocal Rank Fusion: `score = sum(1 / (k + rank + 1))`, k=60
+3. Time decay applied: `0.5 ^ (days_old / 180)`, floor=0.1 (default)
+4. Priority boost (high = x1.5), namespace boost (scoped_then_global match = x1.3)
+
+Embedding model: [ruri-v3-30m-ONNX](https://huggingface.co/sirasagi62/ruri-v3-30m-ONNX) (256-dim, Japanese-optimized). Runs locally via Transformers.js.
+
+## Transcript Ingestion
+
+Save Claude Code session transcripts as searchable Q&A pairs.
 
 ```bash
-# From stdin
 cat transcript.jsonl | hako-mcp save-transcript
-
-# From file
 hako-mcp save-transcript transcript.jsonl
-
-# With explicit namespace
 hako-mcp save-transcript --namespace /path/to/project < transcript.jsonl
 ```
 
-Transcripts are saved with `source: "transcript"`, `priority: "normal"`, and exact-match deduplication to prevent re-import duplicates.
+Saved with `source: "transcript"`, `priority: "normal"`. Exact-match deduplication prevents duplicates when re-importing the same file.
+
+## Configuring Claude Code to Use Hako
+
+Installing the MCP server makes the tools available, but Claude Code won't use them automatically. You need to tell Claude **when** to save and search via your `CLAUDE.md` (project or global).
+
+### Minimal Example
+
+```markdown
+# hako (long-term memory)
+
+## Search
+- Before starting work, search hako for prior decisions and context
+- The current code shows *what* the code does; hako shows *why* it's that way
+
+## Save
+- Save important decisions, conclusions, and rationale after discussion
+- Use scope "global" for knowledge reusable across projects
+```
+
+### Software Development Example
+
+```markdown
+# hako (long-term memory)
+
+## Search
+- Before modifying code, search hako for past decisions about that area
+- Even if the user doesn't mention prior context, proactively search and share relevant findings
+
+## Save
+- Save design decisions with rationale ("chose X over Y because...")
+- Save investigation results and root cause analyses
+- Save architecture constraints and trade-offs
+- Use scope "global" for language/framework-level learnings
+```
+
+### Research / Note-taking Example
+
+```markdown
+# hako (long-term memory)
+
+## Search
+- Search hako when the user asks about a topic previously discussed
+- Cross-reference related entries using scope_mode "all"
+
+## Save
+- Save key findings, conclusions, and source references
+- Save user preferences and recurring instructions
+- Use scope "global" for general knowledge not tied to a specific project
+```
+
+## Packages
+
+| Package | Description |
+|---------|-------------|
+| [hako-mcp](packages/hako-mcp) | MCP server (AI assistant integration) |
+| [hako-db](packages/hako-db) | Core library (embed in any Node.js backend) |
+| [hako-cli](packages/hako-cli) | CLI tool |
+| [hako-sync](packages/hako-sync) | Multi-machine sync via Git + JSONL oplog |
+
+Dependency direction: hako-cli -> hako-sync -> hako-db, hako-mcp -> hako-db
+
+## CLI
+
+```bash
+hako add --title "Meeting notes" --content "Discussed Q3 roadmap" --tags "meeting,roadmap"
+hako web https://example.com --tags "reference"
+hako search "roadmap planning"
+hako list --since 2025-01-01 --limit 50
+hako show V1StGXR8_Z5jdHi
+hako delete V1StGXR8_Z5jdHi
+hako stats
+hako --db ~/work/hako.db search "meeting"
+```
+
+## Library
+
+```typescript
+import { Hako } from 'hako-db'
+
+const hako = new Hako()                              // ~/.hako/hako.db
+const { id, status } = await hako.save({
+  title: 'Design doc',
+  content: 'Architecture overview...',
+  source: 'notes',
+  tags: 'architecture,design',
+})
+const results = await hako.search('architecture', { limit: 10 })
+hako.close()
+```
+
+## Multi-Machine Sync
+
+Sync Hako's DB across multiple machines. Data is synchronized via a Git repository, with each machine maintaining its own JSONL oplog — zero Git conflicts. Requires Git.
+
+### First Machine
+
+Create a private repo on GitHub (or similar), then place `config.toml` in the same directory as the DB (default: `~/.hako`).
+
+```toml
+# ~/.hako/config.toml
+[sync]
+# Local path for the sync Git repo
+repo = "~/.hako/sync"
+
+# Unique name for this machine (must not overlap with other machines)
+machine_id = "macbook"
+
+# Entries older than this are skipped on import
+import_max_age_days = 90
+```
+
+The init command creates the local repository and initializes the machine directory. Then set up the remote and perform the first push.
+
+```bash
+hako sync init
+git -C ~/.hako/sync remote add origin git@github.com:user/hako-sync.git
+hako sync push
+```
+
+### Additional Machines
+
+Clone the remote repo, then create a `config.toml` with a different `machine_id`.
+
+```bash
+git clone git@github.com:user/hako-sync.git ~/.hako/sync
+```
+
+```toml
+# ~/.hako/config.toml
+[sync]
+repo = "~/.hako/sync"
+machine_id = "mac-mini"         # Different from the first machine
+import_max_age_days = 90
+```
+
+```bash
+hako sync init                  # Create this machine's directory
+hako sync pull                  # Import data from other machines
+```
+
+### Daily Usage
+
+```bash
+hako sync pull     # Import remote changes
+hako sync push     # Export local changes -> Git commit & push
+hako sync status   # Show sync status
+```
+
+### Claude Code Integration (hooks)
+
+Set up Claude Code hooks to auto-sync at session start/end.
+
+Add to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "npx -y hako-cli sync pull"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "npx -y hako-cli sync pull && npx -y hako-cli sync push"
+      }
+    ]
+  }
+}
+```
+
+If you have the CLI installed globally (`npm install -g hako-cli`), you can use `hako sync pull` directly instead.
 
 ## Data Locations
 
 | Path | Purpose |
 |------|---------|
 | `~/.hako/hako.db` | Main database (default) |
-| `~/.hako/embedding_cache.db` | Embedding cache (follows DB directory) |
-| `~/.hako/config.toml` | User config (optional, global fallback) |
-| `~/.hako/sync-state.json` | Sync state (local only, not in Git) |
+| `~/.hako/embedding_cache.db` | Embedding cache |
+| `~/.hako/config.toml` | User config (optional) |
+| `~/.hako/sync-state.json` | Sync state (local only) |
 | `~/.cache/huggingface/hub/` | ONNX model cache |
 
-## Multiple Databases
-
-Use `--db` flag or `HAKO_DB` environment variable to switch databases. The embedding cache and `config.toml` are automatically resolved relative to the DB directory first, falling back to `~/.hako/`.
-
-Priority: `--db` flag > `HAKO_DB` env > `~/.hako/hako.db`
-
-```bash
-# Per-command
-hako --db ~/work/hako.db add --title "Work note" --source work
-
-# Environment variable
-export HAKO_DB=~/work/hako.db
-hako search "meeting"
-
-# Per-project with direnv
-echo 'export HAKO_DB=$PWD/.hako/hako.db' > .envrc
-direnv allow
-```
+DB path priority: `--db` flag > `HAKO_DB` env > `~/.hako/hako.db`
 
 ## Configuration
 
-Config is resolved per-DB: `<db-dir>/config.toml` > `~/.hako/config.toml` > built-in defaults:
+Resolved per-DB: `<db-dir>/config.toml` > `~/.hako/config.toml` > built-in defaults:
 
 ```toml
 [search]
+# Reciprocal Rank Fusion parameter.
+# Higher values reduce the impact of rank differences. Usually no need to change.
 rrf_k = 60
+
+# Number of days until time decay halves the score.
+# Lower values make older entries less likely to appear.
 time_decay_half_life_days = 180.0
+
+# Floor for time decay.
+# No matter how old, the score won't drop below this ratio.
 time_decay_floor = 0.1
 
 [embedding]
+# Embedding model for vector search.
+# ruri-v3-30m-ONNX is a lightweight model optimized for Japanese.
 model = "sirasagi62/ruri-v3-30m-ONNX"
+
+# Max characters of content used for embedding generation.
+# Title is always used in full; content is truncated to this length.
+# Increasing this significantly won't improve accuracy due to model input length constraints.
 max_content_chars = 500
 
 [sync]
-repo = "~/.hako/sync"           # Git repo path for multi-machine sync
-machine_id = "macbook"           # This machine's identifier
-import_max_age_days = 90         # Skip old entries on import (match prune days)
+repo = "~/.hako/sync"
+machine_id = "macbook"
+import_max_age_days = 90
 ```
 
 ## Development
 
 ```bash
-pnpm --filter hako-db test       # Run library tests (69 tests)
-pnpm --filter hako-db test:watch # Watch mode
-pnpm --filter hako-db build      # Build library
-pnpm --filter hako-sync test     # Run sync tests (12 tests)
-pnpm --filter hako-sync build    # Build sync package
-pnpm --filter hako-cli build     # Build CLI
-pnpm --filter hako-mcp test      # Run MCP server tests (7 tests)
-pnpm --filter hako-mcp build     # Build MCP server
+pnpm install
+pnpm --filter hako-db test       # Library tests
+pnpm --filter hako-mcp test      # MCP server tests
+pnpm --filter hako-sync test     # Sync tests
+pnpm build                       # Build all packages
 ```
 
 ## Tech Stack
 
 - **DB**: better-sqlite3 + sqlite-vec + FTS5 trigram
-- **ID**: nanoid (globally unique, sync-safe)
-- **Embedding**: @huggingface/transformers (ONNX runtime)
-- **HTML**: cheerio
-- **MCP**: @modelcontextprotocol/sdk (stdio transport)
-- **Sync**: Git + JSONL oplog (per-machine, append-only)
-- **CLI**: commander
-- **Test**: vitest
-- **Build**: tsup (ESM only)
+- **ID**: nanoid
+- **Embedding**: @huggingface/transformers (ONNX)
+- **MCP**: @modelcontextprotocol/sdk (stdio)
+- **Sync**: Git + JSONL oplog
+- **Build**: tsup (ESM), vitest, pnpm workspaces
 
 ## License
 
