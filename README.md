@@ -97,7 +97,7 @@ Embedding model: [ruri-v3-30m-ONNX](https://huggingface.co/sirasagi62/ruri-v3-30
 
 ## Transcript Ingestion
 
-Save Claude Code session transcripts as searchable Q&A pairs.
+Save Claude Code session transcripts as searchable Q&A pairs. The `hako-mcp` command is the CLI provided by the MCP server package (`packages/hako-mcp`), which offers transcript ingestion in addition to serving the MCP server.
 
 ```bash
 cat transcript.jsonl | hako-mcp save-transcript
