@@ -95,7 +95,7 @@ Node.js 20+が必要です。
 
 ## トランスクリプト取り込み
 
-Claude CodeのセッションログをQ&Aのペアとして保存できます。
+Claude CodeのセッションログをQ&Aのペアとして保存できます。`hako-mcp` はMCPサーバーパッケージ（`packages/hako-mcp`）に含まれるCLIコマンドで、MCPサーバーの起動のほかにトランスクリプト取り込みのサブコマンドも提供します。
 
 ```bash
 cat transcript.jsonl | hako-mcp save-transcript
