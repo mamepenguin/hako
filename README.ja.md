@@ -95,15 +95,157 @@ Node.js 20+が必要です。
 
 ## トランスクリプト取り込み
 
-Claude CodeのセッションログをQ&Aのペアとして保存できます。`hako-mcp` はMCPサーバーパッケージ（`packages/hako-mcp`）に含まれるCLIコマンドで、MCPサーバーの起動のほかにトランスクリプト取り込みのサブコマンドも提供します。
+Claude CodeやCodexのセッションログをQ&Aのペアとして保存できます。`hako-mcp` はMCPサーバーパッケージ（`packages/hako-mcp`）に含まれるCLIコマンドで、MCPサーバーの起動のほかにトランスクリプト取り込みのサブコマンドも提供します。
 
 ```bash
 cat transcript.jsonl | hako-mcp save-transcript
 hako-mcp save-transcript transcript.jsonl
+hako-mcp save-transcript --format codex rollout.jsonl
 hako-mcp save-transcript --namespace /path/to/project < transcript.jsonl
 ```
 
-`source: "transcript"`, `priority: "normal"` で保存されます。完全一致による重複排除があるため、同じファイルを再度取り込んでも重複は発生しません。
+`--format` には `auto`, `claude`, `codex` を指定できます（デフォルトは `auto`）。`source: "transcript"`, `priority: "normal"` で保存されます。完全一致による重複排除があるため、同じファイルを再度取り込んでも重複は発生しません。
+
+### トランスクリプトの自動保存（hooks）
+
+AIアシスタントのhookを使うと、セッション終了時にトランスクリプトを自動保存できます。以下の例では `npx -y hako-mcp` を使います。hakoをローカル開発中の場合は、`pnpm --filter hako-mcp build` 後に `node /path/to/hako/packages/hako-mcp/dist/index.js` に置き換えてください。
+
+hookスクリプトには `jq` が必要です。Codex用スクリプトでは、`~/.codex/state_5.sqlite` からrollout JSONLのパスを解決するために `sqlite3` も使います。
+
+#### Claude Code
+
+hook用ディレクトリを作成し、`~/.claude/hooks/hako-save-transcript.sh` を書きます。
+
+```bash
+mkdir -p ~/.claude/hooks
+```
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+HAKO_MCP=(npx -y hako-mcp)
+INPUT=$(cat)
+
+TRANSCRIPT_PATH=$(printf "%s" "$INPUT" | jq -r '.transcript_path // empty')
+NAMESPACE=$(printf "%s" "$INPUT" | jq -r '.cwd // .project_dir // empty')
+[ -n "$NAMESPACE" ] || NAMESPACE="$PWD"
+
+if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+  "${HAKO_MCP[@]}" save-transcript \
+    --format claude \
+    --namespace "$NAMESPACE" \
+    "$TRANSCRIPT_PATH"
+fi
+```
+
+実行権限を付け、Stop hookとして登録します。
+
+```bash
+chmod +x ~/.claude/hooks/hako-save-transcript.sh
+```
+
+`~/.claude/settings.json` に以下を追加します。すでにhooks設定がある場合は、既存の `hooks` オブジェクトにこの `Stop` エントリをmergeしてください。
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "~/.claude/hooks/hako-save-transcript.sh"
+      }
+    ]
+  }
+}
+```
+
+#### Codex
+
+Codexでは実際のトランスクリプトパスが `~/.codex/state_5.sqlite` の `threads.rollout_path` に保存されます。以下のhookは、hook入力の `transcript_path` / `rollout_path`、thread id、最後に現在のcwdの最新thread、という順番でrollout JSONLを探します。
+
+hook用ディレクトリを作成し、`~/.codex/hooks/hako-save-transcript.sh` を書きます。
+
+```bash
+mkdir -p ~/.codex/hooks
+```
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+HAKO_MCP=(npx -y hako-mcp)
+CODEX_STATE_DB="${CODEX_STATE_DB:-$HOME/.codex/state_5.sqlite}"
+INPUT=$(cat)
+
+json_get() {
+  printf "%s" "$INPUT" | jq -r "$1 // empty" 2>/dev/null | head -n 1
+}
+
+sql_escape() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+NAMESPACE=$(json_get '.cwd // .project_dir // .workspace.current_dir // .workspace.cwd')
+[ -n "$NAMESPACE" ] || NAMESPACE="$PWD"
+
+FORMAT="auto"
+TRANSCRIPT_PATH=$(json_get '.transcript_path')
+if [ -z "$TRANSCRIPT_PATH" ]; then
+  TRANSCRIPT_PATH=$(json_get '.rollout_path // .thread.rollout_path // .session.rollout_path')
+  [ -z "$TRANSCRIPT_PATH" ] || FORMAT="codex"
+fi
+
+if [ -z "$TRANSCRIPT_PATH" ] && [ -f "$CODEX_STATE_DB" ]; then
+  THREAD_ID=$(json_get '.thread_id // .threadId // .session_id // .sessionId // .id // .thread.id')
+  case "$THREAD_ID" in
+    ""|*[!0-9a-fA-F-]*) ;;
+    *)
+      TRANSCRIPT_PATH=$(sqlite3 "$CODEX_STATE_DB" \
+        "select rollout_path from threads where id = '$(sql_escape "$THREAD_ID")' limit 1;" \
+        2>/dev/null)
+      [ -z "$TRANSCRIPT_PATH" ] || FORMAT="codex"
+      ;;
+  esac
+fi
+
+if [ -z "$TRANSCRIPT_PATH" ] && [ -f "$CODEX_STATE_DB" ]; then
+  TRANSCRIPT_PATH=$(sqlite3 "$CODEX_STATE_DB" \
+    "select rollout_path from threads where cwd = '$(sql_escape "$NAMESPACE")' order by updated_at_ms desc limit 1;" \
+    2>/dev/null)
+  [ -z "$TRANSCRIPT_PATH" ] || FORMAT="codex"
+fi
+
+if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+  "${HAKO_MCP[@]}" save-transcript \
+    --format "$FORMAT" \
+    --namespace "$NAMESPACE" \
+    "$TRANSCRIPT_PATH"
+fi
+```
+
+実行権限を付け、Stop hookとして登録します。
+
+```bash
+chmod +x ~/.codex/hooks/hako-save-transcript.sh
+```
+
+`~/.codex/hooks.json` に以下を追加します。すでにhooks設定がある場合は、既存の `hooks` オブジェクトにこの `Stop` エントリをmergeしてください。
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "~/.codex/hooks/hako-save-transcript.sh"
+      }
+    ]
+  }
+}
+```
+
+`hooks.json` やhookスクリプトを変更した後、Codexがhookの承認を求めることがあります。その場合は許可してください。
 
 ## Claude Codeにhakoを使わせる
 

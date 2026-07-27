@@ -97,15 +97,157 @@ Embedding model: [ruri-v3-30m-ONNX](https://huggingface.co/sirasagi62/ruri-v3-30
 
 ## Transcript Ingestion
 
-Save Claude Code session transcripts as searchable Q&A pairs. The `hako-mcp` command is the CLI provided by the MCP server package (`packages/hako-mcp`), which offers transcript ingestion in addition to serving the MCP server.
+Save Claude Code or Codex session transcripts as searchable Q&A pairs. The `hako-mcp` command is the CLI provided by the MCP server package (`packages/hako-mcp`), which offers transcript ingestion in addition to serving the MCP server.
 
 ```bash
 cat transcript.jsonl | hako-mcp save-transcript
 hako-mcp save-transcript transcript.jsonl
+hako-mcp save-transcript --format codex rollout.jsonl
 hako-mcp save-transcript --namespace /path/to/project < transcript.jsonl
 ```
 
-Saved with `source: "transcript"`, `priority: "normal"`. Exact-match deduplication prevents duplicates when re-importing the same file.
+`--format` can be `auto`, `claude`, or `codex` (`auto` is the default). Saved with `source: "transcript"`, `priority: "normal"`. Exact-match deduplication prevents duplicates when re-importing the same file.
+
+### Automatic Transcript Capture (hooks)
+
+You can use assistant hooks to save each completed session automatically. The examples below use `npx -y hako-mcp`; if you are developing hako locally, replace it with `node /path/to/hako/packages/hako-mcp/dist/index.js` after running `pnpm --filter hako-mcp build`.
+
+The hook scripts require `jq`. The Codex script also requires `sqlite3` so it can resolve `~/.codex/state_5.sqlite` to the current rollout JSONL.
+
+#### Claude Code
+
+Create the hook directory and write `~/.claude/hooks/hako-save-transcript.sh`:
+
+```bash
+mkdir -p ~/.claude/hooks
+```
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+HAKO_MCP=(npx -y hako-mcp)
+INPUT=$(cat)
+
+TRANSCRIPT_PATH=$(printf "%s" "$INPUT" | jq -r '.transcript_path // empty')
+NAMESPACE=$(printf "%s" "$INPUT" | jq -r '.cwd // .project_dir // empty')
+[ -n "$NAMESPACE" ] || NAMESPACE="$PWD"
+
+if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+  "${HAKO_MCP[@]}" save-transcript \
+    --format claude \
+    --namespace "$NAMESPACE" \
+    "$TRANSCRIPT_PATH"
+fi
+```
+
+Make it executable and register it as a Stop hook:
+
+```bash
+chmod +x ~/.claude/hooks/hako-save-transcript.sh
+```
+
+Add the command to `~/.claude/settings.json`. If you already have hooks configured, merge this `Stop` entry into the existing `hooks` object.
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "~/.claude/hooks/hako-save-transcript.sh"
+      }
+    ]
+  }
+}
+```
+
+#### Codex
+
+Codex stores the actual transcript path as `threads.rollout_path` in `~/.codex/state_5.sqlite`. The hook below first uses any direct `transcript_path` / `rollout_path` in hook input, then falls back to resolving the current thread id, then finally to the latest thread for the current cwd.
+
+Create the hook directory and write `~/.codex/hooks/hako-save-transcript.sh`:
+
+```bash
+mkdir -p ~/.codex/hooks
+```
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+HAKO_MCP=(npx -y hako-mcp)
+CODEX_STATE_DB="${CODEX_STATE_DB:-$HOME/.codex/state_5.sqlite}"
+INPUT=$(cat)
+
+json_get() {
+  printf "%s" "$INPUT" | jq -r "$1 // empty" 2>/dev/null | head -n 1
+}
+
+sql_escape() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+NAMESPACE=$(json_get '.cwd // .project_dir // .workspace.current_dir // .workspace.cwd')
+[ -n "$NAMESPACE" ] || NAMESPACE="$PWD"
+
+FORMAT="auto"
+TRANSCRIPT_PATH=$(json_get '.transcript_path')
+if [ -z "$TRANSCRIPT_PATH" ]; then
+  TRANSCRIPT_PATH=$(json_get '.rollout_path // .thread.rollout_path // .session.rollout_path')
+  [ -z "$TRANSCRIPT_PATH" ] || FORMAT="codex"
+fi
+
+if [ -z "$TRANSCRIPT_PATH" ] && [ -f "$CODEX_STATE_DB" ]; then
+  THREAD_ID=$(json_get '.thread_id // .threadId // .session_id // .sessionId // .id // .thread.id')
+  case "$THREAD_ID" in
+    ""|*[!0-9a-fA-F-]*) ;;
+    *)
+      TRANSCRIPT_PATH=$(sqlite3 "$CODEX_STATE_DB" \
+        "select rollout_path from threads where id = '$(sql_escape "$THREAD_ID")' limit 1;" \
+        2>/dev/null)
+      [ -z "$TRANSCRIPT_PATH" ] || FORMAT="codex"
+      ;;
+  esac
+fi
+
+if [ -z "$TRANSCRIPT_PATH" ] && [ -f "$CODEX_STATE_DB" ]; then
+  TRANSCRIPT_PATH=$(sqlite3 "$CODEX_STATE_DB" \
+    "select rollout_path from threads where cwd = '$(sql_escape "$NAMESPACE")' order by updated_at_ms desc limit 1;" \
+    2>/dev/null)
+  [ -z "$TRANSCRIPT_PATH" ] || FORMAT="codex"
+fi
+
+if [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+  "${HAKO_MCP[@]}" save-transcript \
+    --format "$FORMAT" \
+    --namespace "$NAMESPACE" \
+    "$TRANSCRIPT_PATH"
+fi
+```
+
+Make it executable and register it as a Stop hook:
+
+```bash
+chmod +x ~/.codex/hooks/hako-save-transcript.sh
+```
+
+Add the command to `~/.codex/hooks.json`. If you already have hooks configured, merge this `Stop` entry into the existing `hooks` object.
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "type": "command",
+        "command": "~/.codex/hooks/hako-save-transcript.sh"
+      }
+    ]
+  }
+}
+```
+
+Codex may ask you to approve the hook after changing `hooks.json` or the script.
 
 ## Configuring Claude Code to Use Hako
 

@@ -130,4 +130,145 @@ describe("parseTranscript", () => {
     expect(chunks).toHaveLength(1);
     expect(chunks[0].content).toContain("Q: Here is my question");
   });
+
+  it("parses Codex rollout JSONL into Q&A chunks", () => {
+    const transcript = [
+      JSON.stringify({
+        type: "session_meta",
+        payload: {
+          originator: "Codex Desktop",
+          cwd: "/Users/libre/Sources/LifeBrain",
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "# AGENTS.md instructions\nInjected context that should not be saved" },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "turn_context",
+        payload: { cwd: "/Users/libre/Sources/LifeBrain" },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "Please add Codex transcript support to hako-mcp" },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "exec_command",
+          arguments: "{}",
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [
+            { type: "output_text", text: "I added Codex rollout parsing while preserving Claude transcript support." },
+          ],
+        },
+      }),
+    ].join("\n");
+
+    const chunks = parseTranscript(transcript);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].content).toContain("Q: Please add Codex transcript support");
+    expect(chunks[0].content).toContain("A: I added Codex rollout parsing");
+    expect(chunks[0].content).not.toContain("AGENTS.md");
+    expect(chunks[0].content).not.toContain("function_call");
+  });
+
+  it("supports explicit transcript format selection", () => {
+    const transcript = [
+      JSON.stringify({ type: "turn_context", payload: {} }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "How should explicit Codex parsing behave?" }],
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "It should parse only when the codex format is selected." }],
+        },
+      }),
+    ].join("\n");
+
+    expect(parseTranscript(transcript, "claude")).toHaveLength(0);
+    expect(parseTranscript(transcript, "codex")).toHaveLength(1);
+  });
+
+  it("combines Codex assistant messages across tool calls until the next user turn", () => {
+    const transcript = [
+      JSON.stringify({ type: "turn_context", payload: {} }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Explain how Codex transcript ingestion works in detail" }],
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "Codex stores rollout JSONL under the sessions directory." }],
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "function_call_output",
+          output: "tool output should be ignored",
+        },
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "The parser reads response_item message payloads only." }],
+        },
+      }),
+      JSON.stringify({
+        type: "turn_context",
+        payload: {},
+      }),
+      JSON.stringify({
+        type: "response_item",
+        payload: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: "Thanks" }],
+        },
+      }),
+    ].join("\n");
+
+    const chunks = parseTranscript(transcript);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].content).toContain("sessions directory");
+    expect(chunks[0].content).toContain("response_item message payloads");
+    expect(chunks[0].content).not.toContain("tool output should be ignored");
+  });
 });
