@@ -357,7 +357,12 @@ machine_id = "macbook"
 
 # Entries older than this are skipped on import
 import_max_age_days = 90
+
+# Sources that are neither pushed nor imported (optional)
+exclude_sources = ["transcript"]
 ```
+
+`repo` expands `~`; a relative path is resolved from the directory of `config.toml`. Entries skipped by `exclude_sources` are not imported later if you remove the source from the list, until the machine that pushed them compacts its oplog.
 
 The init command creates the local repository and initializes the machine directory. Then set up the remote and perform the first push.
 
@@ -407,14 +412,19 @@ Add to `~/.claude/settings.json`:
   "hooks": {
     "SessionStart": [
       {
-        "type": "command",
-        "command": "npx -y hako-cli sync pull"
+        "hooks": [
+          { "type": "command", "command": "npx -y hako-cli sync pull" }
+        ]
       }
     ],
-    "Stop": [
+    "SessionEnd": [
       {
-        "type": "command",
-        "command": "npx -y hako-cli sync pull && npx -y hako-cli sync push"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y hako-cli sync pull && npx -y hako-cli sync push"
+          }
+        ]
       }
     ]
   }
@@ -467,6 +477,7 @@ max_content_chars = 500
 repo = "~/.hako/sync"
 machine_id = "macbook"
 import_max_age_days = 90
+exclude_sources = []
 ```
 
 ## Development

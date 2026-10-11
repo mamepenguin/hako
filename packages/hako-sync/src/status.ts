@@ -9,14 +9,17 @@ export function status(
   dbPath?: string,
 ): SyncStatus {
   const state = loadState(config.machine_id, dbPath);
-  const currentIds = new Set(hako.allIds());
+  const currentIds = new Set(
+    hako.allIds({ excludeSources: config.exclude_sources }),
+  );
+  const existingIds = new Set(hako.allIds());
   const lastPushIds = new Set(state.last_push_ids);
 
   const unpushedAdds = [...currentIds].filter(
     (id) => !lastPushIds.has(id),
   ).length;
   const unpushedDeletes = [...lastPushIds].filter(
-    (id) => !currentIds.has(id),
+    (id) => !existingIds.has(id),
   ).length;
 
   const machines = listMachines(config.repo).filter(

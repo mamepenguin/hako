@@ -19,7 +19,7 @@ function validatePriority(p: string): Priority {
 async function importEntry(
   hako: Hako,
   op: OpAdd | OpUpdate,
-): Promise<"created" | "skipped"> {
+): Promise<{ status: "created" | "skipped"; present: boolean }> {
   const result = await hako.save({
     id: op.id,
     title: op.entry.title,
@@ -32,7 +32,11 @@ async function importEntry(
     happened_at: op.entry.happened_at,
     tags: op.entry.tags,
   });
-  return result.status === "created" ? "created" : "skipped";
+  return {
+    status: result.status === "created" ? "created" : "skipped",
+    // "skipped" with the same ID means the entry was already here
+    present: result.id === op.id,
+  };
 }
 
 export async function pull(
@@ -43,6 +47,10 @@ export async function pull(
   await gitPull(config.repo);
 
   const state = loadState(config.machine_id, dbPath);
+  const idsBeforePull = new Set(hako.allIds());
+  const lastPushIds = new Set(state.last_push_ids);
+  // Whether each ID this pull touched is present afterwards, last action wins
+  const presentAfterPull = new Map<string, boolean>();
   const machines = listMachines(config.repo).filter(
     (m) => m !== config.machine_id,
   );
@@ -57,6 +65,7 @@ export async function pull(
   const deleteIds = new Set<string>();
   const addOps: Array<{ op: OpAdd; compacted: boolean }> = [];
   const updateOps: OpUpdate[] = [];
+  const excluded = new Set(config.exclude_sources);
 
   for (const machine of machines) {
     const savedOffset = state.offsets[machine] ?? 0;
@@ -70,6 +79,10 @@ export async function pull(
     newOffsets[machine] = newOffset;
 
     for (const op of ops) {
+      if (op.op !== "delete" && excluded.has(op.entry.source)) {
+        skipped++;
+        continue;
+      }
       if (op.op === "delete") {
         deleteIds.add(op.id);
       } else if (op.op === "update") {
@@ -82,6 +95,7 @@ export async function pull(
 
   // Apply deletes first (delete-wins)
   for (const id of deleteIds) {
+    presentAfterPull.set(id, false);
     if (hako.delete(id)) {
       deleted++;
     }
@@ -96,8 +110,11 @@ export async function pull(
 
   // Apply adds
   for (const { op, compacted } of addOps) {
-    // Skip if deleted by any machine
-    if (deleteIds.has(op.id)) {
+    // Skip if deleted by any machine, including an unpushed local delete
+    if (
+      deleteIds.has(op.id) ||
+      (lastPushIds.has(op.id) && !idsBeforePull.has(op.id))
+    ) {
       skipped++;
       continue;
     }
@@ -111,10 +128,12 @@ export async function pull(
     try {
       // After compaction (epoch change), treat add as upsert
       if (compacted) {
+        presentAfterPull.set(op.id, false);
         hako.delete(op.id); // remove if exists, ignore if not
       }
 
-      const status = await importEntry(hako, op);
+      const { status, present } = await importEntry(hako, op);
+      presentAfterPull.set(op.id, present);
       if (status === "created") {
         added++;
       } else {
@@ -133,8 +152,10 @@ export async function pull(
     }
 
     try {
+      presentAfterPull.set(op.id, false);
       hako.delete(op.id); // remove existing to avoid ID-based dedup skip
-      const status = await importEntry(hako, op);
+      const { status, present } = await importEntry(hako, op);
+      presentAfterPull.set(op.id, present);
       if (status === "created") {
         added++;
       } else {
@@ -145,12 +166,19 @@ export async function pull(
     }
   }
 
-  // Update state: offsets + current DB IDs as last_push_ids
-  // This ensures the next push correctly detects changes since this pull
+  // Built only from what this pull did, not from the DB afterwards: other
+  // sessions may add or delete entries while it runs, and those changes must
+  // still reach the next push. Entries this pull removed without re-creating
+  // stay out, or the next push would delete them on every machine.
+  for (const [id, present] of presentAfterPull) {
+    if (present) lastPushIds.add(id);
+    else lastPushIds.delete(id);
+  }
+
   saveState(
     {
       ...state,
-      last_push_ids: hako.allIds(),
+      last_push_ids: [...lastPushIds],
       last_push_at: state.last_push_at,
       offsets: newOffsets,
       epochs: newEpochs,

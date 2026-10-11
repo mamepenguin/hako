@@ -3,6 +3,7 @@ export interface SyncConfig {
   readonly machine_id: string;
   readonly import_max_age_days: number;
   readonly compaction_threshold: number;
+  readonly exclude_sources: readonly string[];
 }
 
 export interface SyncEntry {
