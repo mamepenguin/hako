@@ -180,6 +180,30 @@ describe("sync integration", () => {
   });
 });
 
+describe("status", () => {
+  it("reports no unread machines after pulling non-ASCII entries", async () => {
+    await hakoA.save({ title: "日本語のエントリ", content: "本文", source: "test" });
+    await push(hakoA, configA, dbPathA);
+
+    expect(status(hakoB, configB, dbPathB).unread_machines).toBe(1);
+    await pull(hakoB, configB, dbPathB);
+    expect(status(hakoB, configB, dbPathB).unread_machines).toBe(0);
+  });
+
+  it("reports a compacted oplog as unread", async () => {
+    const low: SyncConfig = { ...configA, compaction_threshold: 1 };
+    const saved = await hakoA.save({ title: "A", source: "test" });
+    await hakoA.save({ title: "B", source: "test" });
+    await push(hakoA, low, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+
+    hakoA.delete(saved.id);
+    const result = await push(hakoA, low, dbPathA);
+    expect(result.compacted).toBe(true);
+    expect(status(hakoB, configB, dbPathB).unread_machines).toBe(1);
+  });
+});
+
 describe("pull and local changes", () => {
   it("still pushes an entry saved locally before a pull", async () => {
     await hakoA.save({ title: "From A", source: "test" });

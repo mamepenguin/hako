@@ -1,6 +1,6 @@
 import type { Hako } from "hako-db";
 import { loadState } from "./state.js";
-import { listMachines, getFileSize } from "./oplog.js";
+import { listMachines, readEpoch, readOps } from "./oplog.js";
 import type { SyncConfig, SyncStatus } from "./types.js";
 
 export function status(
@@ -28,9 +28,12 @@ export function status(
 
   let unreadMachines = 0;
   for (const machine of machines) {
-    const size = getFileSize(config.repo, machine);
-    const offset = state.offsets[machine] ?? 0;
-    if (size > offset) unreadMachines++;
+    // Same offset rule as pull: offsets count characters, and a compaction
+    // makes pull re-read the oplog from the start.
+    const compacted =
+      readEpoch(config.repo, machine) !== (state.epochs[machine] ?? 0);
+    const offset = compacted ? 0 : (state.offsets[machine] ?? 0);
+    if (readOps(config.repo, machine, offset).ops.length > 0) unreadMachines++;
   }
 
   return {
