@@ -137,7 +137,7 @@ pull: git pull → check epoch per machine (reset offset if compacted → upsert
 
 ### Auto-Compaction
 
-- **Trigger**: push 後に自マシンの ops.jsonl が `compaction_threshold`（デフォルト 2000 ops）を超えたら自動発火
+- **Trigger**: push 後に自マシンの ops.jsonl の行数から同期対象のエントリ数を引いた値（無駄な ops）が `compaction_threshold`（デフォルト 2000）以上になったら自動発火。add だけの oplog は縮まないので数えない
 - **動作**: 現在のDB全エントリを op:add として ops.jsonl を書き直し（atomic write via tmp+rename）、`ops.epoch` をインクリメント
 - **pull 側検知**: 保存済み epoch と現在の epoch を比較。不一致なら offset=0 から再読み込み（既存IDはskipで冪等）
 - **制約**: compaction で delete ops は失われる。各マシンが独立して prune する運用が前提
@@ -157,8 +157,11 @@ pull: git pull → check epoch per machine (reset offset if compacted → upsert
 repo = "~/.hako/sync"           # Git repo path (user does git clone)
 machine_id = "macbook"           # This machine's identifier
 import_max_age_days = 90         # Skip entries older than this on import
-compaction_threshold = 2000      # Auto-compact when ops exceed this count
+compaction_threshold = 2000      # Auto-compact when redundant ops reach this count
+exclude_sources = ["transcript"] # Sources neither pushed nor imported (default: none)
 ```
+
+`repo` は `~` を展開し、相対パスは config.toml のあるディレクトリを基準に解決する（hook はプロジェクトを cwd にして動くため）。
 
 ### CLI
 

@@ -57,6 +57,7 @@ export async function pull(
   const deleteIds = new Set<string>();
   const addOps: Array<{ op: OpAdd; compacted: boolean }> = [];
   const updateOps: OpUpdate[] = [];
+  const excluded = new Set(config.exclude_sources);
 
   for (const machine of machines) {
     const savedOffset = state.offsets[machine] ?? 0;
@@ -70,6 +71,10 @@ export async function pull(
     newOffsets[machine] = newOffset;
 
     for (const op of ops) {
+      if (op.op !== "delete" && excluded.has(op.entry.source)) {
+        skipped++;
+        continue;
+      }
       if (op.op === "delete") {
         deleteIds.add(op.id);
       } else if (op.op === "update") {
@@ -145,12 +150,21 @@ export async function pull(
     }
   }
 
-  // Update state: offsets + current DB IDs as last_push_ids
-  // This ensures the next push correctly detects changes since this pull
+  // Only entries that came from other machines join last_push_ids; local
+  // entries not yet pushed must stay visible to the next push.
+  const existingIds = new Set(hako.allIds());
+  const remoteIds = [
+    ...addOps.map(({ op }) => op.id),
+    ...updateOps.map((op) => op.id),
+  ];
+  const lastPushIds = new Set(state.last_push_ids);
+  for (const id of remoteIds) lastPushIds.add(id);
+  for (const id of deleteIds) lastPushIds.delete(id);
+
   saveState(
     {
       ...state,
-      last_push_ids: hako.allIds(),
+      last_push_ids: [...lastPushIds].filter((id) => existingIds.has(id)),
       last_push_at: state.last_push_at,
       offsets: newOffsets,
       epochs: newEpochs,

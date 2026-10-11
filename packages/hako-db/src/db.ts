@@ -539,10 +539,17 @@ export function touchAccessed(
   ).run(...entryIds);
 }
 
-export function getAllEntryIds(db: Database.Database): string[] {
-  const rows = db.prepare("SELECT id FROM entries").all() as Array<{
-    id: string;
-  }>;
+export function getAllEntryIds(
+  db: Database.Database,
+  excludeSources: readonly string[] = [],
+): string[] {
+  const where =
+    excludeSources.length > 0
+      ? ` WHERE source NOT IN (${excludeSources.map(() => "?").join(",")})`
+      : "";
+  const rows = db
+    .prepare(`SELECT id FROM entries${where}`)
+    .all(...excludeSources) as Array<{ id: string }>;
   return rows.map((r) => r.id);
 }
 

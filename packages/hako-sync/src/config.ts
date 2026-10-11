@@ -1,7 +1,17 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { resolveConfigPath } from "hako-db";
 import TOML from "@iarna/toml";
 import type { SyncConfig } from "./types.js";
+
+// Hooks run with the project as the working directory, so a relative repo
+// must not follow cwd.
+function resolveRepoPath(repo: string, configDir: string): string {
+  if (repo === "~") return homedir();
+  if (repo.startsWith("~/")) return join(homedir(), repo.slice(2));
+  return resolve(configDir, repo);
+}
 
 export function loadSyncConfig(dbPath?: string): SyncConfig | null {
   const configPath = resolveConfigPath(dbPath);
@@ -16,8 +26,10 @@ export function loadSyncConfig(dbPath?: string): SyncConfig | null {
   const machineId = sync["machine_id"];
   if (typeof repo !== "string" || typeof machineId !== "string") return null;
 
+  const excludeSources = sync["exclude_sources"];
+
   return {
-    repo,
+    repo: resolveRepoPath(repo, dirname(configPath)),
     machine_id: machineId,
     import_max_age_days:
       typeof sync["import_max_age_days"] === "number"
@@ -27,5 +39,8 @@ export function loadSyncConfig(dbPath?: string): SyncConfig | null {
       typeof sync["compaction_threshold"] === "number"
         ? sync["compaction_threshold"]
         : 2000,
+    exclude_sources: Array.isArray(excludeSources)
+      ? excludeSources.filter((s): s is string => typeof s === "string")
+      : [],
   };
 }

@@ -93,8 +93,8 @@ export class Hako {
     return getStats(this.db, this.resolvedDbPath);
   }
 
-  allIds(): string[] {
-    return getAllEntryIds(this.db);
+  allIds(options?: { readonly excludeSources?: readonly string[] }): string[] {
+    return getAllEntryIds(this.db, options?.excludeSources);
   }
 
   getMany(ids: string[]): Entry[] {

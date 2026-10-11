@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { Hako } from "hako-db";
-import { push, pull } from "../src/index.js";
+import { push, pull, status } from "../src/index.js";
 import { countOps } from "../src/oplog.js";
 import type { SyncConfig } from "../src/types.js";
 
@@ -56,6 +56,7 @@ beforeEach(() => {
     machine_id: "machine-a",
     import_max_age_days: 90,
     compaction_threshold: 2000,
+    exclude_sources: [],
   };
 
   configB = {
@@ -63,6 +64,7 @@ beforeEach(() => {
     machine_id: "machine-b",
     import_max_age_days: 90,
     compaction_threshold: 2000,
+    exclude_sources: [],
   };
 });
 
@@ -159,6 +161,82 @@ describe("sync integration", () => {
   });
 });
 
+describe("pull and local changes", () => {
+  it("still pushes an entry saved locally before a pull", async () => {
+    await hakoA.save({ title: "From A", source: "test" });
+    await push(hakoA, configA, dbPathA);
+
+    await hakoB.save({ title: "Saved on B before pull", source: "test" });
+    await pull(hakoB, configB, dbPathB);
+
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.added).toBe(1);
+
+    await pull(hakoA, configA, dbPathA);
+    const titles = hakoA.list({ limit: 10 }).map((e) => e.title).sort();
+    expect(titles).toEqual(["From A", "Saved on B before pull"]);
+  });
+
+  it("does not push back entries imported by a pull", async () => {
+    await hakoA.save({ title: "From A", source: "test" });
+    await push(hakoA, configA, dbPathA);
+
+    await pull(hakoB, configB, dbPathB);
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.committed).toBe(false);
+  });
+});
+
+describe("exclude_sources", () => {
+  it("does not push entries from excluded sources", async () => {
+    const excluding: SyncConfig = {
+      ...configA,
+      exclude_sources: ["transcript"],
+    };
+    await hakoA.save({ title: "Session log", source: "transcript" });
+    await hakoA.save({ title: "Design decision", source: "claude" });
+
+    const result = await push(hakoA, excluding, dbPathA);
+    expect(result.added).toBe(1);
+    expect(status(hakoA, excluding, dbPathA).unpushed_adds).toBe(0);
+
+    await pull(hakoB, configB, dbPathB);
+    expect(hakoB.list({ limit: 10 }).map((e) => e.title)).toEqual([
+      "Design decision",
+    ]);
+  });
+
+  it("does not import entries from excluded sources", async () => {
+    await hakoA.save({ title: "Session log", source: "transcript" });
+    await hakoA.save({ title: "Design decision", source: "claude" });
+    await push(hakoA, configA, dbPathA);
+
+    const excluding: SyncConfig = {
+      ...configB,
+      exclude_sources: ["transcript"],
+    };
+    const result = await pull(hakoB, excluding, dbPathB);
+    expect(result.added).toBe(1);
+    expect(hakoB.list({ limit: 10 }).map((e) => e.title)).toEqual([
+      "Design decision",
+    ]);
+  });
+
+  it("does not emit deletes for entries of a newly excluded source", async () => {
+    await hakoA.save({ title: "Session log", source: "transcript" });
+    await hakoA.save({ title: "Design decision", source: "claude" });
+    await push(hakoA, configA, dbPathA);
+
+    const excluding: SyncConfig = {
+      ...configA,
+      exclude_sources: ["transcript"],
+    };
+    const result = await push(hakoA, excluding, dbPathA);
+    expect(result.deleted).toBe(0);
+    expect(result.committed).toBe(false);
+  });
+});
+
 describe("prune + sync", () => {
   it("prune generates delete op on push", async () => {
     // A saves and pushes
@@ -188,10 +266,10 @@ describe("compaction", () => {
     // Use a low threshold for testing
     const lowThresholdConfig: SyncConfig = {
       ...configA,
-      compaction_threshold: 5,
+      compaction_threshold: 4,
     };
 
-    // Push multiple entries to exceed threshold
+    // Push multiple entries
     for (let i = 0; i < 4; i++) {
       await hakoA.save({ title: `Entry ${i}`, source: "test" });
     }
@@ -201,7 +279,7 @@ describe("compaction", () => {
     const entries = hakoA.list({ limit: 10 });
     hakoA.delete(entries[0].id);
     hakoA.delete(entries[1].id);
-    // Now push with 2 new delete ops → total ops should exceed 5
+    // 6 ops for 2 live entries → 4 redundant ops reach the threshold
     const result = await push(hakoA, lowThresholdConfig, dbPathA);
     expect(result.compacted).toBe(true);
 
@@ -213,13 +291,17 @@ describe("compaction", () => {
   it("compaction preserves all current entries", async () => {
     const lowThresholdConfig: SyncConfig = {
       ...configA,
-      compaction_threshold: 3,
+      compaction_threshold: 2,
     };
 
-    // Save 3 entries and push (exceeds threshold of 3)
     await hakoA.save({ title: "Keep A", source: "test" });
     await hakoA.save({ title: "Keep B", source: "test" });
     await hakoA.save({ title: "Keep C", source: "test" });
+    const dropped = await hakoA.save({ title: "Drop", source: "test" });
+    await push(hakoA, lowThresholdConfig, dbPathA);
+
+    // 5 ops for 3 live entries → 2 redundant ops reach the threshold
+    hakoA.delete(dropped.id);
     const result = await push(hakoA, lowThresholdConfig, dbPathA);
     expect(result.compacted).toBe(true);
 
@@ -235,7 +317,7 @@ describe("compaction", () => {
   it("pull detects compaction and resets offset", async () => {
     const lowThresholdConfig: SyncConfig = {
       ...configA,
-      compaction_threshold: 5,
+      compaction_threshold: 4,
     };
 
     // A saves entries and remembers their IDs for later deletion
@@ -254,13 +336,13 @@ describe("compaction", () => {
     for (let i = 3; i < 5; i++) {
       await hakoA.save({ title: `Entry ${i}`, source: "test" });
     }
-    await push(hakoA, lowThresholdConfig, dbPathA); // +2 ops = 5 total, compaction triggers
+    await push(hakoA, lowThresholdConfig, dbPathA); // 5 ops for 5 entries, nothing to compact
 
     // Delete 2 previously-pushed entries and push again
     hakoA.delete(savedIds[0]);
     hakoA.delete(savedIds[1]);
     const pushResult = await push(hakoA, lowThresholdConfig, dbPathA);
-    // After compaction, oplog is rewritten with current 3 entries (5-2)
+    // 7 ops for 3 entries → compaction rewrites the oplog with the 3 entries
     expect(pushResult.compacted).toBe(true);
 
     // B pulls after compaction — offset reset reads snapshot from 0
@@ -275,6 +357,29 @@ describe("compaction", () => {
 
     // B has 5 (entries 0,1 from before + entries 2,3,4 upserted/added).
     expect(hakoB.list({ limit: 20 })).toHaveLength(5);
+  });
+
+  it("does not compact again on add-only pushes after compaction", async () => {
+    const lowThresholdConfig: SyncConfig = {
+      ...configA,
+      compaction_threshold: 2,
+    };
+
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await hakoA.save({ title: `Entry ${i}`, source: "test" });
+      ids.push(r.id);
+    }
+    await push(hakoA, lowThresholdConfig, dbPathA);
+    hakoA.delete(ids[0]);
+    hakoA.delete(ids[1]);
+    const compacting = await push(hakoA, lowThresholdConfig, dbPathA);
+    expect(compacting.compacted).toBe(true);
+
+    await hakoA.save({ title: "After compaction", source: "test" });
+    const next = await push(hakoA, lowThresholdConfig, dbPathA);
+    expect(next.compacted).toBe(false);
+    expect(countOps(syncRepo, "machine-a")).toBe(2);
   });
 
   it("age filter skips old entries on pull", async () => {
@@ -356,6 +461,7 @@ describe("op:update", () => {
       machine_id: "machine-c",
       import_max_age_days: 90,
       compaction_threshold: 2000,
+      exclude_sources: [],
     };
 
     try {

@@ -355,7 +355,12 @@ machine_id = "macbook"
 
 # これより古いエントリは取り込みをスキップします
 import_max_age_days = 90
+
+# pushも取り込みもしないsource（省略可）
+exclude_sources = ["transcript"]
 ```
+
+`repo`の`~`はホームディレクトリに展開され、相対パスは`config.toml`のあるディレクトリを基準に解決されます。
 
 initコマンドでローカルリポジトリの作成とマシンディレクトリの初期化を行います。その後、リモートを設定して最初のpushを行います。
 
@@ -405,14 +410,19 @@ Claude Codeのhooksを設定すると、セッションの開始・終了時に�
   "hooks": {
     "SessionStart": [
       {
-        "type": "command",
-        "command": "npx -y hako-cli sync pull"
+        "hooks": [
+          { "type": "command", "command": "npx -y hako-cli sync pull" }
+        ]
       }
     ],
-    "Stop": [
+    "SessionEnd": [
       {
-        "type": "command",
-        "command": "npx -y hako-cli sync pull && npx -y hako-cli sync push"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "npx -y hako-cli sync pull && npx -y hako-cli sync push"
+          }
+        ]
       }
     ]
   }
@@ -465,6 +475,7 @@ max_content_chars = 500
 repo = "~/.hako/sync"
 machine_id = "macbook"
 import_max_age_days = 90
+exclude_sources = []
 ```
 
 ## 開発

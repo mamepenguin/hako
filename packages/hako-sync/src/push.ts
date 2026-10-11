@@ -34,11 +34,16 @@ export async function push(
   dbPath?: string,
 ): Promise<PushResult> {
   const state = loadState(config.machine_id, dbPath);
-  const currentIds = new Set(hako.allIds());
+  const currentIds = new Set(
+    hako.allIds({ excludeSources: config.exclude_sources }),
+  );
+  const existingIds = new Set(hako.allIds());
   const lastPushIds = new Set(state.last_push_ids);
 
   const newIds = [...currentIds].filter((id) => !lastPushIds.has(id));
-  const deletedIds = [...lastPushIds].filter((id) => !currentIds.has(id));
+  // Compared against every entry, so excluding a source does not delete its
+  // entries on other machines.
+  const deletedIds = [...lastPushIds].filter((id) => !existingIds.has(id));
 
   const ops: Op[] = [];
   const ts = new Date().toISOString().slice(0, 19);
@@ -76,7 +81,9 @@ export async function push(
   // Auto-compaction: if ops count exceeds threshold, rewrite as snapshot
   let compacted = false;
   const opsCount = countOps(config.repo, config.machine_id);
-  if (opsCount >= config.compaction_threshold) {
+  // Only redundant ops count: an add-only oplog cannot shrink, and counting
+  // all ops would rewrite the snapshot on every push past the threshold.
+  if (opsCount - currentIds.size >= config.compaction_threshold) {
     const allEntries = hako.getMany([...currentIds]);
     const snapshotOps = allEntries.map((entry) => entryToAddOp(entry, ts));
     writeOps(config.repo, config.machine_id, snapshotOps);
