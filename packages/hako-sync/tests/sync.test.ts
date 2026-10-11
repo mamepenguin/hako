@@ -226,6 +226,69 @@ describe("pull and local changes", () => {
     }
   });
 
+  it("does not push a delete for an entry the pull removed and could not re-import", async () => {
+    await hakoA.save({ title: "P", content: "same", source: "test" });
+    const q = await hakoA.save({ title: "Q", content: "other", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+
+    // B drops the update as a duplicate of P after deleting its old copy of Q
+    await hakoA.update(q.id, { title: "P", content: "same" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+    expect(hakoB.get(q.id)).toBeNull();
+
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(0);
+  });
+
+  it("does not let a compaction snapshot revive an unpushed local delete", async () => {
+    const lowThresholdA: SyncConfig = { ...configA, compaction_threshold: 2 };
+    const d = await hakoA.save({ title: "Deleted on B", source: "test" });
+    const ids: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const r = await hakoA.save({ title: `Dropped ${i}`, source: "test" });
+      ids.push(r.id);
+    }
+    await push(hakoA, lowThresholdA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+
+    hakoB.delete(d.id);
+    for (const id of ids) hakoA.delete(id);
+    const compacting = await push(hakoA, lowThresholdA, dbPathA);
+    expect(compacting.compacted).toBe(true);
+
+    await pull(hakoB, configB, dbPathB);
+    expect(hakoB.get(d.id)).toBeNull();
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(1);
+  });
+
+  it("does not push back an entry restored by an op:update in a later pull", async () => {
+    const saved = await hakoA.save({ title: "Original", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+    hakoB.delete(saved.id);
+    await push(hakoB, configB, dbPathB);
+
+    const dbPathC = join(tempDir, "machine-c", "hako.db");
+    mkdirSync(join(tempDir, "machine-c"), { recursive: true });
+    const hakoC = new Hako({ dbPath: dbPathC });
+    const configC: SyncConfig = { ...configA, machine_id: "machine-c" };
+    try {
+      await pull(hakoC, configC, dbPathC);
+      await hakoA.update(saved.id, { title: "Updated by A" });
+      await push(hakoA, configA, dbPathA);
+      await pull(hakoC, configC, dbPathC);
+      expect(hakoC.get(saved.id)?.title).toBe("Updated by A");
+
+      const pushC = await push(hakoC, configC, dbPathC);
+      expect(pushC.committed).toBe(false);
+    } finally {
+      hakoC.close();
+    }
+  });
+
   it("does not push back entries imported by a pull", async () => {
     await hakoA.save({ title: "From A", source: "test" });
     await push(hakoA, configA, dbPathA);

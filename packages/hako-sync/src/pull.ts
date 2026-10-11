@@ -43,6 +43,8 @@ export async function pull(
   await gitPull(config.repo);
 
   const state = loadState(config.machine_id, dbPath);
+  const idsBeforePull = new Set(hako.allIds());
+  const lastPushIds = new Set(state.last_push_ids);
   const machines = listMachines(config.repo).filter(
     (m) => m !== config.machine_id,
   );
@@ -101,8 +103,11 @@ export async function pull(
 
   // Apply adds
   for (const { op, compacted } of addOps) {
-    // Skip if deleted by any machine
-    if (deleteIds.has(op.id)) {
+    // Skip if deleted by any machine, including an unpushed local delete
+    if (
+      deleteIds.has(op.id) ||
+      (lastPushIds.has(op.id) && !idsBeforePull.has(op.id))
+    ) {
       skipped++;
       continue;
     }
@@ -151,11 +156,13 @@ export async function pull(
   }
 
   // Local adds and deletes not yet pushed must stay visible to the next push,
-  // so only what this pull changed is reflected. Remote entries skipped here
-  // stay out, or the next push would delete them on their machine.
+  // so only what this pull changed is reflected. Entries this pull removed
+  // (remote deletes, failed re-imports) and remote entries it skipped stay
+  // out, or the next push would delete them on every machine.
   const existingIds = new Set(hako.allIds());
-  const lastPushIds = new Set(state.last_push_ids);
-  for (const id of deleteIds) lastPushIds.delete(id);
+  for (const id of idsBeforePull) {
+    if (!existingIds.has(id)) lastPushIds.delete(id);
+  }
   const remoteIds = [
     ...addOps.map(({ op }) => op.id),
     ...updateOps.map((op) => op.id),
