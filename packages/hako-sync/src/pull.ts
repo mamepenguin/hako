@@ -45,6 +45,7 @@ export async function pull(
   const state = loadState(config.machine_id, dbPath);
   const idsBeforePull = new Set(hako.allIds());
   const lastPushIds = new Set(state.last_push_ids);
+  const removedByPull = new Set<string>();
   const machines = listMachines(config.repo).filter(
     (m) => m !== config.machine_id,
   );
@@ -89,6 +90,7 @@ export async function pull(
 
   // Apply deletes first (delete-wins)
   for (const id of deleteIds) {
+    removedByPull.add(id);
     if (hako.delete(id)) {
       deleted++;
     }
@@ -121,6 +123,7 @@ export async function pull(
     try {
       // After compaction (epoch change), treat add as upsert
       if (compacted) {
+        removedByPull.add(op.id);
         hako.delete(op.id); // remove if exists, ignore if not
       }
 
@@ -143,6 +146,7 @@ export async function pull(
     }
 
     try {
+      removedByPull.add(op.id);
       hako.delete(op.id); // remove existing to avoid ID-based dedup skip
       const status = await importEntry(hako, op);
       if (status === "created") {
@@ -156,11 +160,11 @@ export async function pull(
   }
 
   // Local adds and deletes not yet pushed must stay visible to the next push,
-  // so only what this pull changed is reflected. Entries this pull removed
-  // (remote deletes, failed re-imports) and remote entries it skipped stay
-  // out, or the next push would delete them on every machine.
+  // including deletes another session makes while this pull runs. Entries
+  // this pull removed (remote deletes, failed re-imports) and remote entries
+  // it skipped stay out, or the next push would delete them on every machine.
   const existingIds = new Set(hako.allIds());
-  for (const id of idsBeforePull) {
+  for (const id of removedByPull) {
     if (!existingIds.has(id)) lastPushIds.delete(id);
   }
   const remoteIds = [

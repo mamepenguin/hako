@@ -140,6 +140,25 @@ describe("sync integration", () => {
     expect(hakoA.list({ limit: 10 })).toHaveLength(0);
   });
 
+  it("delete-wins when add and delete arrive in the same pull", async () => {
+    const saved = await hakoA.save({ title: "Deleted by B", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+    hakoB.delete(saved.id);
+    await push(hakoB, configB, dbPathB);
+
+    const dbPathC = join(tempDir, "machine-c", "hako.db");
+    mkdirSync(join(tempDir, "machine-c"), { recursive: true });
+    const hakoC = new Hako({ dbPath: dbPathC });
+    const configC: SyncConfig = { ...configA, machine_id: "machine-c" };
+    try {
+      await pull(hakoC, configC, dbPathC);
+      expect(hakoC.get(saved.id)).toBeNull();
+    } finally {
+      hakoC.close();
+    }
+  });
+
   it("skips duplicate entries on re-pull", async () => {
     // A saves and pushes
     await hakoA.save({ title: "Already exists", source: "test" });
@@ -287,6 +306,27 @@ describe("pull and local changes", () => {
     } finally {
       hakoC.close();
     }
+  });
+
+  it("still pushes a delete made by another session during a pull", async () => {
+    const y = await hakoB.save({ title: "Deleted mid-pull", source: "test" });
+    await push(hakoB, configB, dbPathB);
+    await hakoA.save({ title: "Imported by B", source: "test" });
+    await push(hakoA, configA, dbPathA);
+
+    const save = hakoB.save.bind(hakoB);
+    const spy = vi.spyOn(hakoB, "save").mockImplementation(async (input) => {
+      hakoB.delete(y.id);
+      return save(input);
+    });
+    try {
+      await pull(hakoB, configB, dbPathB);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(1);
   });
 
   it("does not push back entries imported by a pull", async () => {
