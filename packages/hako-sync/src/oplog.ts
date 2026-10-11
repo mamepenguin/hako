@@ -6,7 +6,6 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  statSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
 import type { Op } from "./types.js";
@@ -70,15 +69,6 @@ export function readOps(
   }
 
   return { ops, newOffset: content.length };
-}
-
-export function getFileSize(
-  repoPath: string,
-  machineId: string,
-): number {
-  const filePath = join(repoPath, validateMachineId(machineId), "ops.jsonl");
-  if (!existsSync(filePath)) return 0;
-  return statSync(filePath).size;
 }
 
 export function countOps(
