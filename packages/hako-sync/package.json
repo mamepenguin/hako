@@ -1,6 +1,6 @@
 {
   "name": "hako-sync",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Multi-machine sync for hako via Git + JSONL oplog",
   "type": "module",
   "main": "./dist/index.js",
