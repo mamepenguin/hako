@@ -1,6 +1,6 @@
 {
   "name": "hako-db",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Data store with hybrid search (FTS5 + vector)",
   "type": "module",
   "main": "./dist/index.js",
