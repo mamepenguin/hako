@@ -465,6 +465,36 @@ describe("pull and local changes", () => {
     expect(pushB.committed).toBe(false);
   });
 
+  it.each([
+    ["op:update", false],
+    ["compacted op:add", true],
+  ])("does not push a delete when re-importing an %s throws", async (_, compact) => {
+    const low: SyncConfig = { ...configA, compaction_threshold: compact ? 2 : 2000 };
+    const x = await hakoA.save({ title: "X", source: "test" });
+    const ids: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const r = await hakoA.save({ title: `Dropped ${i}`, source: "test" });
+      ids.push(r.id);
+    }
+    await push(hakoA, low, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+
+    await hakoA.update(x.id, { title: "X edited" });
+    if (compact) for (const id of ids) hakoA.delete(id);
+    const pushA = await push(hakoA, low, dbPathA);
+    expect(pushA.compacted).toBe(compact);
+
+    const spy = vi.spyOn(hakoB, "save").mockRejectedValue(new Error("embed failed"));
+    try {
+      await pull(hakoB, configB, dbPathB);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(hakoB.get(x.id)).toBeNull();
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(0);
+  });
+
   it("does not push back entries imported by a pull", async () => {
     await hakoA.save({ title: "From A", source: "test" });
     await push(hakoA, configA, dbPathA);
