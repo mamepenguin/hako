@@ -46,6 +46,7 @@ export async function pull(
   const idsBeforePull = new Set(hako.allIds());
   const lastPushIds = new Set(state.last_push_ids);
   const removedByPull = new Set<string>();
+  const createdByPull = new Set<string>();
   const machines = listMachines(config.repo).filter(
     (m) => m !== config.machine_id,
   );
@@ -129,6 +130,7 @@ export async function pull(
 
       const status = await importEntry(hako, op);
       if (status === "created") {
+        createdByPull.add(op.id);
         added++;
       } else {
         skipped++;
@@ -150,6 +152,7 @@ export async function pull(
       hako.delete(op.id); // remove existing to avoid ID-based dedup skip
       const status = await importEntry(hako, op);
       if (status === "created") {
+        createdByPull.add(op.id);
         added++;
       } else {
         skipped++;
@@ -159,21 +162,14 @@ export async function pull(
     }
   }
 
-  // Local adds and deletes not yet pushed must stay visible to the next push,
-  // including deletes another session makes while this pull runs. Entries
-  // this pull removed (remote deletes, failed re-imports) and remote entries
-  // it skipped stay out, or the next push would delete them on every machine.
-  const existingIds = new Set(hako.allIds());
+  // Built only from what this pull did, not from the DB afterwards: other
+  // sessions may add or delete entries while it runs, and those changes must
+  // still reach the next push. Entries this pull removed without re-creating
+  // stay out, or the next push would delete them on every machine.
   for (const id of removedByPull) {
-    if (!existingIds.has(id)) lastPushIds.delete(id);
+    if (!createdByPull.has(id)) lastPushIds.delete(id);
   }
-  const remoteIds = [
-    ...addOps.map(({ op }) => op.id),
-    ...updateOps.map((op) => op.id),
-  ];
-  for (const id of remoteIds) {
-    if (existingIds.has(id)) lastPushIds.add(id);
-  }
+  for (const id of createdByPull) lastPushIds.add(id);
 
   saveState(
     {

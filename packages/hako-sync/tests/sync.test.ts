@@ -329,6 +329,116 @@ describe("pull and local changes", () => {
     expect(pushB.deleted).toBe(1);
   });
 
+  it("pushes a delete made by another session after the pull re-imported the entry", async () => {
+    const z1 = await hakoA.save({ title: "Z1", content: "one", source: "test" });
+    const z2 = await hakoA.save({ title: "Z2", content: "two", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+    await hakoA.update(z1.id, { title: "Z1b" });
+    await hakoA.update(z2.id, { title: "Z2b" });
+    await push(hakoA, configA, dbPathA);
+
+    const save = hakoB.save.bind(hakoB);
+    const spy = vi.spyOn(hakoB, "save").mockImplementation(async (input) => {
+      const r = await save(input);
+      if (input.id === z2.id) hakoB.delete(z1.id);
+      return r;
+    });
+    try {
+      await pull(hakoB, configB, dbPathB);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(hakoB.get(z1.id)).toBeNull();
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(1);
+  });
+
+  it("pushes a delete made by another session during a pull of a compaction snapshot", async () => {
+    const low: SyncConfig = { ...configA, compaction_threshold: 1 };
+    const own = await hakoB.save({ title: "B own", content: "own", source: "test" });
+    await push(hakoB, configB, dbPathB);
+    await pull(hakoA, low, dbPathA);
+    const a1 = await hakoA.save({ title: "A1", content: "a1", source: "test" });
+    await hakoA.save({ title: "A2", content: "a2", source: "test" });
+    await push(hakoA, low, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+    hakoA.delete(a1.id);
+    const compacting = await push(hakoA, low, dbPathA);
+    expect(compacting.compacted).toBe(true);
+
+    const save = hakoB.save.bind(hakoB);
+    let saves = 0;
+    const spy = vi.spyOn(hakoB, "save").mockImplementation(async (input) => {
+      const r = await save(input);
+      saves++;
+      if (saves === 2) hakoB.delete(own.id);
+      return r;
+    });
+    try {
+      await pull(hakoB, configB, dbPathB);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(hakoB.get(own.id)).toBeNull();
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(1);
+  });
+
+  it("pushes a delete made by another session of an entry first imported by the same pull", async () => {
+    const n = await hakoA.save({ title: "New on A", source: "test" });
+    await push(hakoA, configA, dbPathA);
+
+    const save = hakoB.save.bind(hakoB);
+    const spy = vi.spyOn(hakoB, "save").mockImplementation(async (input) => {
+      const r = await save(input);
+      if (input.id === n.id) hakoB.delete(n.id);
+      return r;
+    });
+    try {
+      await pull(hakoB, configB, dbPathB);
+    } finally {
+      spy.mockRestore();
+    }
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(1);
+  });
+
+  it("does not echo a remote delete back", async () => {
+    const saved = await hakoA.save({ title: "Deleted on A", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+    hakoA.delete(saved.id);
+    await push(hakoA, configA, dbPathA);
+
+    await pull(hakoB, configB, dbPathB);
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(0);
+  });
+
+  it("does not push a delete for an entry a compaction re-import dropped as a duplicate", async () => {
+    const low: SyncConfig = { ...configA, compaction_threshold: 2 };
+    await hakoA.save({ title: "P", content: "same", source: "test" });
+    const q = await hakoA.save({ title: "Q", content: "other", source: "test" });
+    const ids: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const r = await hakoA.save({ title: `Dropped ${i}`, source: "test" });
+      ids.push(r.id);
+    }
+    await push(hakoA, low, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+
+    await hakoA.update(q.id, { title: "P", content: "same" });
+    for (const id of ids) hakoA.delete(id);
+    const compacting = await push(hakoA, low, dbPathA);
+    expect(compacting.compacted).toBe(true);
+
+    await pull(hakoB, configB, dbPathB);
+    expect(hakoB.get(q.id)).toBeNull();
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(0);
+  });
+
   it("does not push back entries imported by a pull", async () => {
     await hakoA.save({ title: "From A", source: "test" });
     await push(hakoA, configA, dbPathA);
