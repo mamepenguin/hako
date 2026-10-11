@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { Hako } from "hako-db";
 import { push, pull, status } from "../src/index.js";
-import { countOps } from "../src/oplog.js";
+import { countOps, readOps } from "../src/oplog.js";
 import type { SyncConfig } from "../src/types.js";
 
 // Mock embeddings to avoid model download
@@ -177,6 +177,55 @@ describe("pull and local changes", () => {
     expect(titles).toEqual(["From A", "Saved on B before pull"]);
   });
 
+  it("still pushes a local delete made before a pull", async () => {
+    const saved = await hakoA.save({ title: "Deleted on A", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+
+    hakoA.delete(saved.id);
+    await pull(hakoA, configA, dbPathA);
+    const pushA = await push(hakoA, configA, dbPathA);
+    expect(pushA.deleted).toBe(1);
+
+    await pull(hakoB, configB, dbPathB);
+    expect(hakoB.get(saved.id)).toBeNull();
+  });
+
+  it("does not push a delete for a remote entry it skipped", async () => {
+    await hakoA.save({
+      title: "Too old for B",
+      source: "test",
+      happened_at: "2020-01-01T00:00:00",
+    });
+    await push(hakoA, configA, dbPathA);
+
+    await pull(hakoB, configB, dbPathB);
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(0);
+  });
+
+  it("does not push back an entry restored by op:update over op:delete", async () => {
+    const saved = await hakoA.save({ title: "Original", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await pull(hakoB, configB, dbPathB);
+    hakoB.delete(saved.id);
+    await push(hakoB, configB, dbPathB);
+    await hakoA.update(saved.id, { title: "Updated by A" });
+    await push(hakoA, configA, dbPathA);
+
+    const dbPathC = join(tempDir, "machine-c", "hako.db");
+    mkdirSync(join(tempDir, "machine-c"), { recursive: true });
+    const hakoC = new Hako({ dbPath: dbPathC });
+    const configC: SyncConfig = { ...configA, machine_id: "machine-c" };
+    try {
+      await pull(hakoC, configC, dbPathC);
+      const pushC = await push(hakoC, configC, dbPathC);
+      expect(pushC.committed).toBe(false);
+    } finally {
+      hakoC.close();
+    }
+  });
+
   it("does not push back entries imported by a pull", async () => {
     await hakoA.save({ title: "From A", source: "test" });
     await push(hakoA, configA, dbPathA);
@@ -220,6 +269,42 @@ describe("exclude_sources", () => {
     expect(hakoB.list({ limit: 10 }).map((e) => e.title)).toEqual([
       "Design decision",
     ]);
+  });
+
+  it("keeps excluded sources out of a compaction snapshot", async () => {
+    const excluding: SyncConfig = {
+      ...configA,
+      compaction_threshold: 2,
+      exclude_sources: ["transcript"],
+    };
+    await hakoA.save({ title: "Session log", source: "transcript" });
+    const kept = await hakoA.save({ title: "Kept", source: "claude" });
+    const ids: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const r = await hakoA.save({ title: `Dropped ${i}`, source: "claude" });
+      ids.push(r.id);
+    }
+    await push(hakoA, excluding, dbPathA);
+    for (const id of ids) hakoA.delete(id);
+    const result = await push(hakoA, excluding, dbPathA);
+    expect(result.compacted).toBe(true);
+
+    const { ops } = readOps(syncRepo, "machine-a");
+    expect(ops.map((o) => o.id)).toEqual([kept.id]);
+  });
+
+  it("does not import updates from excluded sources", async () => {
+    const saved = await hakoA.save({ title: "Session log", source: "transcript" });
+    await push(hakoA, configA, dbPathA);
+    await hakoA.update(saved.id, { title: "Session log, edited" });
+    await push(hakoA, configA, dbPathA);
+
+    const excluding: SyncConfig = {
+      ...configB,
+      exclude_sources: ["transcript"],
+    };
+    await pull(hakoB, excluding, dbPathB);
+    expect(hakoB.get(saved.id)).toBeNull();
   });
 
   it("does not emit deletes for entries of a newly excluded source", async () => {

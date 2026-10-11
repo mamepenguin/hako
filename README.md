@@ -362,7 +362,7 @@ import_max_age_days = 90
 exclude_sources = ["transcript"]
 ```
 
-`repo` expands `~`; a relative path is resolved from the directory of `config.toml`.
+`repo` expands `~`; a relative path is resolved from the directory of `config.toml`. Entries skipped by `exclude_sources` are not imported later if you remove the source from the list, until the machine that pushed them compacts its oplog.
 
 The init command creates the local repository and initializes the machine directory. Then set up the remote and perform the first push.
 

@@ -150,21 +150,24 @@ export async function pull(
     }
   }
 
-  // Only entries that came from other machines join last_push_ids; local
-  // entries not yet pushed must stay visible to the next push.
+  // Local adds and deletes not yet pushed must stay visible to the next push,
+  // so only what this pull changed is reflected. Remote entries skipped here
+  // stay out, or the next push would delete them on their machine.
   const existingIds = new Set(hako.allIds());
+  const lastPushIds = new Set(state.last_push_ids);
+  for (const id of deleteIds) lastPushIds.delete(id);
   const remoteIds = [
     ...addOps.map(({ op }) => op.id),
     ...updateOps.map((op) => op.id),
   ];
-  const lastPushIds = new Set(state.last_push_ids);
-  for (const id of remoteIds) lastPushIds.add(id);
-  for (const id of deleteIds) lastPushIds.delete(id);
+  for (const id of remoteIds) {
+    if (existingIds.has(id)) lastPushIds.add(id);
+  }
 
   saveState(
     {
       ...state,
-      last_push_ids: [...lastPushIds].filter((id) => existingIds.has(id)),
+      last_push_ids: [...lastPushIds],
       last_push_at: state.last_push_at,
       offsets: newOffsets,
       epochs: newEpochs,
