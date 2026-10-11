@@ -439,6 +439,32 @@ describe("pull and local changes", () => {
     expect(pushB.deleted).toBe(0);
   });
 
+  it("does not push a delete for an entry created and then dropped within one pull", async () => {
+    await hakoA.save({ title: "P", content: "same", source: "test" });
+    const q = await hakoA.save({ title: "Q", content: "other", source: "test" });
+    await push(hakoA, configA, dbPathA);
+    await hakoA.update(q.id, { title: "P", content: "same" });
+    await push(hakoA, configA, dbPathA);
+
+    await pull(hakoB, configB, dbPathB);
+    expect(hakoB.get(q.id)).toBeNull();
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.deleted).toBe(0);
+  });
+
+  it("does not push back entries imported by a pull that stopped before saving state", async () => {
+    await hakoA.save({ title: "From A", source: "test" });
+    await push(hakoA, configA, dbPathA);
+
+    const statePath = join(tempDir, "machine-b", "sync-state.json");
+    await pull(hakoB, configB, dbPathB);
+    rmSync(statePath);
+
+    await pull(hakoB, configB, dbPathB);
+    const pushB = await push(hakoB, configB, dbPathB);
+    expect(pushB.committed).toBe(false);
+  });
+
   it("does not push back entries imported by a pull", async () => {
     await hakoA.save({ title: "From A", source: "test" });
     await push(hakoA, configA, dbPathA);

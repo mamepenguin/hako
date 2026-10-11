@@ -19,7 +19,7 @@ function validatePriority(p: string): Priority {
 async function importEntry(
   hako: Hako,
   op: OpAdd | OpUpdate,
-): Promise<"created" | "skipped"> {
+): Promise<{ status: "created" | "skipped"; present: boolean }> {
   const result = await hako.save({
     id: op.id,
     title: op.entry.title,
@@ -32,7 +32,11 @@ async function importEntry(
     happened_at: op.entry.happened_at,
     tags: op.entry.tags,
   });
-  return result.status === "created" ? "created" : "skipped";
+  return {
+    status: result.status === "created" ? "created" : "skipped",
+    // "skipped" with the same ID means the entry was already here
+    present: result.id === op.id,
+  };
 }
 
 export async function pull(
@@ -45,8 +49,8 @@ export async function pull(
   const state = loadState(config.machine_id, dbPath);
   const idsBeforePull = new Set(hako.allIds());
   const lastPushIds = new Set(state.last_push_ids);
-  const removedByPull = new Set<string>();
-  const createdByPull = new Set<string>();
+  // Whether each ID this pull touched is present afterwards, last action wins
+  const presentAfterPull = new Map<string, boolean>();
   const machines = listMachines(config.repo).filter(
     (m) => m !== config.machine_id,
   );
@@ -91,7 +95,7 @@ export async function pull(
 
   // Apply deletes first (delete-wins)
   for (const id of deleteIds) {
-    removedByPull.add(id);
+    presentAfterPull.set(id, false);
     if (hako.delete(id)) {
       deleted++;
     }
@@ -124,13 +128,13 @@ export async function pull(
     try {
       // After compaction (epoch change), treat add as upsert
       if (compacted) {
-        removedByPull.add(op.id);
+        presentAfterPull.set(op.id, false);
         hako.delete(op.id); // remove if exists, ignore if not
       }
 
-      const status = await importEntry(hako, op);
+      const { status, present } = await importEntry(hako, op);
+      presentAfterPull.set(op.id, present);
       if (status === "created") {
-        createdByPull.add(op.id);
         added++;
       } else {
         skipped++;
@@ -148,11 +152,11 @@ export async function pull(
     }
 
     try {
-      removedByPull.add(op.id);
+      presentAfterPull.set(op.id, false);
       hako.delete(op.id); // remove existing to avoid ID-based dedup skip
-      const status = await importEntry(hako, op);
+      const { status, present } = await importEntry(hako, op);
+      presentAfterPull.set(op.id, present);
       if (status === "created") {
-        createdByPull.add(op.id);
         added++;
       } else {
         skipped++;
@@ -166,10 +170,10 @@ export async function pull(
   // sessions may add or delete entries while it runs, and those changes must
   // still reach the next push. Entries this pull removed without re-creating
   // stay out, or the next push would delete them on every machine.
-  for (const id of removedByPull) {
-    if (!createdByPull.has(id)) lastPushIds.delete(id);
+  for (const [id, present] of presentAfterPull) {
+    if (present) lastPushIds.add(id);
+    else lastPushIds.delete(id);
   }
-  for (const id of createdByPull) lastPushIds.add(id);
 
   saveState(
     {
